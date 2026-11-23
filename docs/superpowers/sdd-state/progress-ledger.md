@@ -67,3 +67,7 @@ Ruling (T10): non-retryable session failures = KeyRejected, EncoderFailed, Compo
 Ruling (T10): Reinit target = next lower rung in QualityPlanner.Ladder (only 720p30/480p30 when encoder is OpenH264); at the lowest rung Reinit decisions are ignored (Hold). New AdaptationController for the new rung (start at its MaxKbps capped by current kbps).
 Ruling (T10): capture Closed while Live -> status shows the source's message (state stays Live, last-frame hold by the session); if no new frame within 10 s -> stop, state Failed, message "Stopped — <source message>". A new frame cancels the hold. Exception (T10 review fix 1): a Closed message equal to CaptureStallMonitor.MinimizedMessage only shows the message (state Live, NO 10 s hold, no stop); a later frame clears it.
 Ruling (T10 review fix 1): static black must warn -> the orchestrator keeps the last sample and re-feeds it to BlankFrameDetector on the 1 s tick when no newer sample arrived (WGC sends no frames for an unchanging picture).
+Task 10: fix round 1/5 (all addressed, 0 open; commits ce77664..c1d7106)
+Task 10: complete (commits 141d1aa..c1d7106 area, review clean after 1 fix round; 210 passed/5 skipped)
+Task 10: minor (deferred): sampler Reset may race an in-flight WGC callback (re-creates staging texture after Reset); RefeedBlank can make a frame skip sampling; SamplePending set on permanent sampler failure; Minimized message replacing ClosedMessage during hold countdown shows mismatched text; no test for NoPicture on a reconnect retry session.
+Next: Task 11 (WPF app).
