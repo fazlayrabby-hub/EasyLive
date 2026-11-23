@@ -15,6 +15,16 @@ public partial class MainWindow : Window
         DataContext = vm;
     }
 
+    private void TitleBar_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (e.ButtonState == System.Windows.Input.MouseButtonState.Pressed) DragMove();
+    }
+
+    private void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+
+    // Same close path as before: closing the main window ends the app (OnExit stops the stream and rolls back an unverified key).
+    private void Close_Click(object sender, RoutedEventArgs e) => Close();
+
     private void Refresh_Click(object sender, RoutedEventArgs e) => _vm.RefreshTargets();
 
     private void Help_Click(object sender, RoutedEventArgs e)
@@ -24,3 +34,4 @@ public partial class MainWindow : Window
         catch { /* no browser: the message above is enough */ }
     }
 }
+

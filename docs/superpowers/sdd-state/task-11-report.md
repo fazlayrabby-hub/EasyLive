@@ -41,3 +41,13 @@ Fix base: bcf23f9. Tests: Passed 234, Skipped 5, Failed 0 (4 more than before in
 - **Minor 2.** `MainViewModel.Shutdown()` cancels the run and synchronously restores or clears the unverified key if the run never reached Live. `App.OnExit` calls it first. Tests: `Shutdown_restores_the_unverified_key_and_cancels_the_run`, `Shutdown_keeps_the_key_of_a_stream_that_went_live`.
 - **Minor 3.** By the time `OnExit` runs the window is already closed (nothing on screen), so I did not add a Hide. `OnExit` now skips disposing capture and the sampler when the stop wait timed out (logs only).
 - **Minor 4.** `Apply` captures the run's platform before clearing it. The Facebook test now does a real Go Live with Facebook and asserts the exact text. The YouTube test asserts the exact generic text and no "Facebook".
+
+
+# UI restyle (commit "style: futuristic UI")
+
+- New `src/EasyLive.App/Themes/Neon.xaml` (merged in App.xaml): palette, gradients (cyan, violet, magenta), glass cards, custom ComboBox / TextBox / pill RadioButton / ghost button / Go Live / Stop styles, status-dot style. `MainWindow.xaml` is now a borderless rounded window with its own title bar (drag, minimize, close). Close calls `Close()`, the same path as before (OnExit then runs Shutdown and the stop wait).
+- Go Live is a glowing gradient button; while live it turns green/cyan, reads "YOU'RE LIVE" and its glow pulses. Stop is a magenta/red outline button. The YouTube/Facebook pill uses brand-tinted fills. Focus glow on the key box and picker. The status line has a colored dot: grey idle, amber pulsing for Checking/Reconnecting, green pulsing for Live, red for Failed.
+- Only logic change: a read-only `MainViewModel.State` property (raised with the other state notifications) so the dot can follow the session state. All bindings, command names, and automation names were kept; I added `AutomationProperties.Name` on the main controls.
+- Layout: window 500x830, min 480x640; the content sits in a vertical ScrollViewer so smaller windows and 125-150% DPI scroll instead of clipping.
+- Verified: build 0 warnings, tests 234 passed / 5 skipped, exe launches and shows the window (needs `DOTNET_ROOT` set on this PC), closes cleanly. Screenshots (idle state) taken at 100% DPI and inspected: dark gradient background, rounded glassy cards, neon title, readable text, the pill toggle with a red YouTube fill, the picker, key box and Stop all as intended.
+- Not verified: the Live, Checking, Reconnecting and Failed visuals (pulsing glow, status dot colors, "YOU'RE LIVE" text) were not seen on screen because no stream was started; the dropdown popup when open; 125-150% DPI; a focus-glow screenshot; the contrast of the hover states.

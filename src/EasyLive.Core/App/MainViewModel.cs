@@ -93,6 +93,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string Status { get => _status; private set => Set(ref _status, value); }
     public string QualityText { get => _qualityText; private set => Set(ref _qualityText, value); }
 
+    /// <summary>Current state of the stream (used by the window to colour the status dot).</summary>
+    public SessionState State => _state;
     public bool IsLive => _state == SessionState.Live;
     public bool IsBusy => _state is SessionState.Checking or SessionState.Live or SessionState.Reconnecting;
     public bool CanEdit => !IsBusy;
@@ -196,7 +198,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private void Recompute()
     {
-        Notify(nameof(CanGoLive)); Notify(nameof(IsBusy)); Notify(nameof(IsLive)); Notify(nameof(CanEdit));
+        Notify(nameof(State)); Notify(nameof(CanGoLive)); Notify(nameof(IsBusy)); Notify(nameof(IsLive)); Notify(nameof(CanEdit));
         _goLive.RaiseCanExecuteChanged();
         _stop.RaiseCanExecuteChanged();
     }
@@ -211,5 +213,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private void Notify(string? name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
+
 
 
