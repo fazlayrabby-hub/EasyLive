@@ -1,0 +1,26 @@
+﻿EasyLive - Read me first
+
+EasyLive by Sohan Roni. Share your screen or a window live on YouTube or Facebook.
+
+Quick start (5 steps)
+ 1. Open EasyLive from the Start menu (or the desktop shortcut).
+ 2. Pick what to share: a whole screen, or one window.
+ 3. Choose YouTube or Facebook.
+ 4. Paste your stream key. Find it in YouTube Studio ("Go live", then "Stream")
+    or in Facebook Live Producer ("Streaming software"). Click "Where do I find this?" in the app for help.
+ 5. Press the big red Go Live button. When you are finished, press Stop,
+    then end the broadcast on YouTube or Facebook too.
+
+Good to know
+ - The first time you use YouTube, it can take up to 24 hours before YouTube lets you stream.
+ - Keep your stream key private. Anyone with it can stream to your channel.
+ - Your key is saved only on this computer, in %LOCALAPPDATA%\EasyLive.
+ - If Windows shows a blue "Windows protected your PC" screen when you first run Setup,
+   click "More info", then "Run anyway". This happens because EasyLive is not code-signed yet.
+ - If Windows Firewall asks, allow EasyLive so it can reach the internet.
+
+Licences
+ EasyLive uses open-source components. See THIRD-PARTY-NOTICES.txt and the LICENSES folder in
+ the EasyLive install folder.
+
+To remove EasyLive: Windows Settings > Apps > Installed apps > EasyLive > Uninstall.
