@@ -32,6 +32,9 @@ internal sealed class SendQueue<T>
 
     public int Count { get { lock (_gate) return _items.Count; } }
 
+    /// <summary>True after <see cref="Complete"/> once nothing is left to send.</summary>
+    public bool IsCompleted { get { lock (_gate) return _completed && _items.Count == 0; } }
+
     public int QueueMs
     {
         get
