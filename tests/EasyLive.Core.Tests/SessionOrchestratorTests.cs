@@ -894,6 +894,32 @@ public sealed class SessionOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task Cancelling_while_waiting_for_the_previous_teardown_ends_stopped()
+    {
+        await GoLiveAsync();
+        var first = LastSession;
+        var gate = new TaskCompletionSource();
+        first.DisposeGate = gate;
+        var stop = _orch.StopAsync();
+        await Task.Delay(100);
+        Assert.False(stop.IsCompleted);
+
+        using var cts = new CancellationTokenSource();
+        var second = _orch.GoLiveAsync(Platform.YouTube, Monitor, cts.Token);
+        await Task.Delay(100);
+        Assert.False(second.IsCompleted);
+        cts.Cancel();
+        await second.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(SessionState.Stopped, _orch.Status.State);
+        gate.SetResult();
+        await stop.WaitAsync(TimeSpan.FromSeconds(5));
+        // the orchestrator is usable again
+        await GoLiveAsync();
+        Assert.Equal(SessionState.Live, _orch.Status.State);
+    }
+
+    [Fact]
     public async Task Go_live_while_live_throws()
     {
         await GoLiveAsync();

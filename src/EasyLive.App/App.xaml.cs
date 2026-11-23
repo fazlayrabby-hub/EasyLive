@@ -82,9 +82,19 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        try { _orchestrator?.StopAsync().Wait(TimeSpan.FromSeconds(15)); } catch { }
-        try { _frames?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5)); } catch { }
-        try { _sampler?.Dispose(); } catch { }
+        // The window is already closed here (nothing on screen), so the waits below cannot show "Not responding".
+        try { _vm?.Shutdown(); } catch { }
+        bool stopped = true;
+        try { stopped = _orchestrator?.StopAsync().Wait(TimeSpan.FromSeconds(15)) ?? true; } catch { }
+        if (stopped)
+        {
+            try { _frames?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5)); } catch { }
+            try { _sampler?.Dispose(); } catch { }
+        }
+        else
+        {
+            System.Diagnostics.Debug.WriteLine("EasyLive: stopping the stream took too long; skipping disposal of capture.");
+        }
         if (_owner) SingleInstance.Release(InstanceName);
         base.OnExit(e);
     }

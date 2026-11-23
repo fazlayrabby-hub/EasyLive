@@ -23,10 +23,16 @@ public class MainViewModelTests : IDisposable
         public event Action<SessionStatus>? StatusChanged;
         public List<(Platform P, CaptureTarget T)> Calls = new();
         public int StopCalls;
+        public bool BlockUntilCancelled;
+        public CancellationToken LastToken;
         public Task GoLiveAsync(Platform p, CaptureTarget t, CancellationToken ct)
         {
             Calls.Add((p, t));
-            return Task.CompletedTask;
+            LastToken = ct;
+            if (!BlockUntilCancelled) return Task.CompletedTask;
+            var tcs = new TaskCompletionSource();
+            ct.Register(() => tcs.TrySetResult());
+            return tcs.Task;
         }
         public Task StopAsync() { StopCalls++; return Task.CompletedTask; }
         public void Raise(SessionState s, string m, string? q = null) => StatusChanged?.Invoke(new SessionStatus(s, m, q));
@@ -142,23 +148,76 @@ public class MainViewModelTests : IDisposable
     }
 
     [Fact]
-    public void Facebook_key_rejection_tells_the_user_to_paste_a_new_key()
+    public async Task Facebook_key_rejection_tells_the_user_to_paste_a_new_key()
     {
         var vm = Make();
         vm.Platform = Platform.Facebook;
+        vm.SelectedTarget = Monitor;
+        vm.StreamKey = "fb-key-1234";
+        vm.GoLiveCommand.Execute(null);
+        await Task.Delay(50);
         _ctl.Raise(SessionState.Failed, EasyLive.Core.Streaming.ErrorTexts.KeyRejected);
         Assert.Contains("paste the new key from Facebook Live Producer", vm.Status);
+        Assert.Equal(MainViewModel.FacebookKeyRejected, vm.Status);
     }
 
     [Fact]
-    public void YouTube_key_rejection_keeps_the_generic_text()
+    public async Task YouTube_key_rejection_keeps_the_generic_text()
     {
         var vm = Make();
+        vm.SelectedTarget = Monitor;
+        vm.StreamKey = "yt-key-1234";
+        vm.GoLiveCommand.Execute(null);
+        await Task.Delay(50);
         _ctl.Raise(SessionState.Failed, EasyLive.Core.Streaming.ErrorTexts.KeyRejected);
+        Assert.Equal(EasyLive.Core.Streaming.ErrorTexts.KeyRejected, vm.Status);
         Assert.DoesNotContain("Facebook", vm.Status);
-        Assert.Contains("key", vm.Status);
     }
 
+    [Fact]
+    public async Task Stop_cancels_a_go_live_that_is_still_waiting()
+    {
+        _ctl.BlockUntilCancelled = true;
+        var vm = Make();
+        vm.SelectedTarget = Monitor;
+        vm.StreamKey = "abcd-1234";
+        vm.GoLiveCommand.Execute(null);
+        await Task.Delay(50);
+        Assert.True(vm.StopCommand.CanExecute(null));
+        Assert.False(_ctl.LastToken.IsCancellationRequested);
+        vm.StopCommand.Execute(null);
+        Assert.True(_ctl.LastToken.IsCancellationRequested);
+        Assert.Equal(1, _ctl.StopCalls);
+    }
+
+    [Fact]
+    public async Task Shutdown_restores_the_unverified_key_and_cancels_the_run()
+    {
+        _keys.Save(Platform.YouTube, "old-key-1234");
+        _ctl.BlockUntilCancelled = true;
+        var vm = Make();
+        vm.SelectedTarget = Monitor;
+        vm.StreamKey = "new-key-5678";
+        vm.GoLiveCommand.Execute(null);
+        await Task.Delay(50);
+        Assert.Equal("new-key-5678", _keys.Load(Platform.YouTube));
+        vm.Shutdown();
+        Assert.Equal("old-key-1234", _keys.Load(Platform.YouTube));
+        Assert.True(_ctl.LastToken.IsCancellationRequested);
+    }
+
+    [Fact]
+    public async Task Shutdown_keeps_the_key_of_a_stream_that_went_live()
+    {
+        var vm = Make();
+        vm.SelectedTarget = Monitor;
+        vm.StreamKey = "abcd-1234";
+        vm.GoLiveCommand.Execute(null);
+        await Task.Delay(50);
+        _ctl.Raise(SessionState.Live, "You're live", "q");
+        vm.Shutdown();
+        Assert.Equal("abcd-1234", _keys.Load(Platform.YouTube));
+    }
     [Fact]
     public async Task Key_is_kept_only_when_the_stream_went_live()
     {
@@ -282,6 +341,8 @@ public class SingleInstanceTests
         SingleInstance.Release(name);
     }
 }
+
+
 
 
 

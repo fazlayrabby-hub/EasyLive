@@ -113,8 +113,21 @@ public sealed class SessionOrchestrator : ISessionController
             if (_run is not null) throw new InvalidOperationException("A stream is already starting or running.");
             previous = _lastTeardown;
         }
-        await previous.ConfigureAwait(false);   // the previous run's devices/connection are released first
-        await PendingDisposals().ConfigureAwait(false);
+        try
+        {
+            // the previous run's devices/connection are released first (Stop pressed meanwhile cancels the wait)
+            await previous.WaitAsync(ct).ConfigureAwait(false);
+            await PendingDisposals().WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            lock (_gate)
+            {
+                if (_run is null) SetStatus(new SessionStatus(SessionState.Stopped, StoppedMessage, null));
+            }
+            Publish();
+            return;
+        }
 
         var run = new Run(p, t) { StartTs = _clock.GetTimestamp() };
         lock (_gate)

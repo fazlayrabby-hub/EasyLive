@@ -31,3 +31,13 @@
 - The "Where do I find this?" text is generic ("choose Streaming software and copy the Stream key"); the exact wording of those pages was not checked and may need a tweak.
 - Stop and window close can block the UI for up to ~12 s while a connect is in flight (task-10 concern 5); OnExit waits at most 15 s.
 - A Go Live that fails before reaching Live and a StopAsync-from-Live both leave the key as described above; a crash mid-run could leave the new key saved even though it never went live.
+
+
+# Fix round 1 (review findings), commit "fix: stop during go-live wait, key rollback on exit, facebook text"
+
+Fix base: bcf23f9. Tests: Passed 234, Skipped 5, Failed 0 (4 more than before in the view model tests plus 1 orchestrator test); build 0 warnings. Note: as before, I wrote the tests alongside the fix and ran them after, so there is no separate RED run on record.
+
+- **Important 1 (Stop ignored while waiting for the previous teardown).** The view model now creates a CancellationTokenSource per run, passes its token to `GoLiveAsync`, and the Stop handler cancels it before calling `StopAsync`. `SessionOrchestrator.GoLiveAsync` now waits for the previous teardown and pending disposals with `WaitAsync(ct)`; on cancel it sets Stopped ("Stream stopped") and returns, and a later Go Live works. Tests: `Stop_cancels_a_go_live_that_is_still_waiting` (view model), `Cancelling_while_waiting_for_the_previous_teardown_ends_stopped` (orchestrator).
+- **Minor 2.** `MainViewModel.Shutdown()` cancels the run and synchronously restores or clears the unverified key if the run never reached Live. `App.OnExit` calls it first. Tests: `Shutdown_restores_the_unverified_key_and_cancels_the_run`, `Shutdown_keeps_the_key_of_a_stream_that_went_live`.
+- **Minor 3.** By the time `OnExit` runs the window is already closed (nothing on screen), so I did not add a Hide. `OnExit` now skips disposing capture and the sampler when the stop wait timed out (logs only).
+- **Minor 4.** `Apply` captures the run's platform before clearing it. The Facebook test now does a real Go Live with Facebook and asserts the exact text. The YouTube test asserts the exact generic text and no "Facebook".

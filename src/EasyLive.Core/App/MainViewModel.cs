@@ -32,6 +32,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private Platform? _runPlatform;
     private string? _previousKey;
     private bool _runWentLive;
+    private CancellationTokenSource? _runCts;
 
     public MainViewModel(ISessionController session, KeyStore keys, IUiDispatcher ui,
                          Func<IReadOnlyList<CaptureTarget>> listTargets)
@@ -127,18 +128,20 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         _runPlatform = Platform;
         _runWentLive = false;
+        _runCts?.Dispose();
+        var cts = _runCts = new CancellationTokenSource();
         _previousKey = SafeLoad(Platform);
         try { _keys.Save(Platform, key); }
         catch { Status = "EasyLive could not save your stream key on this computer."; return; }
 
         // Show progress at once; the orchestrator confirms it right away.
         Apply(new SessionStatus(SessionState.Checking, SessionOrchestrator.CheckingMessage, null), local: true);
-        _ = RunGoLive(Platform, target);
+        _ = RunGoLive(Platform, target, cts.Token);
     }
 
-    private async Task RunGoLive(Platform platform, CaptureTarget target)
+    private async Task RunGoLive(Platform platform, CaptureTarget target, CancellationToken ct)
     {
-        try { await _session.GoLiveAsync(platform, target, CancellationToken.None).ConfigureAwait(false); }
+        try { await _session.GoLiveAsync(platform, target, ct).ConfigureAwait(false); }
         catch (Exception)
         {
             _ui.Post(() => Apply(new SessionStatus(SessionState.Failed,
@@ -148,6 +151,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private async Task StopSafe()
     {
+        // Also cancels a Go Live that is still waiting (e.g. for the previous stream to finish closing).
+        try { _runCts?.Cancel(); } catch (ObjectDisposedException) { }
         try { await _session.StopAsync().ConfigureAwait(false); } catch { /* shown through status */ }
     }
 
@@ -155,6 +160,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         // A late status from a finished run must not unlock the window while a new run is starting.
         if (local && IsBusy) return;
+        var runPlatform = _runPlatform;
         _state = s.State;
         if (s.State == SessionState.Live) { _runWentLive = true; }
         else if (!IsBusy && _runPlatform is { } p)
@@ -163,11 +169,22 @@ public sealed class MainViewModel : INotifyPropertyChanged
             _runPlatform = null;
         }
 
-        Status = s.State == SessionState.Failed && s.Message == ErrorTexts.KeyRejected && (_runPlatform ?? Platform) == Platform.Facebook
+        Status = s.State == SessionState.Failed && s.Message == ErrorTexts.KeyRejected && (runPlatform ?? Platform) == Platform.Facebook
             ? FacebookKeyRejected
             : s.Message;
         QualityText = s.QualityText ?? "";
         Recompute();
+    }
+
+    /// <summary>Call when the app closes: synchronously undoes the key save if the stream never went live.</summary>
+    public void Shutdown()
+    {
+        try { _runCts?.Cancel(); } catch (ObjectDisposedException) { }
+        if (_runPlatform is { } p)
+        {
+            if (!_runWentLive) RestoreKey(p);
+            _runPlatform = null;
+        }
     }
 
     private void RestoreKey(Platform p)
@@ -194,3 +211,5 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private void Notify(string? name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
+
+
