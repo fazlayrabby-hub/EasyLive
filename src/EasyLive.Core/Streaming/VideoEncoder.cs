@@ -79,7 +79,15 @@ internal sealed unsafe class VideoEncoder : IDisposable
 
         AVDictionary* opts = null;
         foreach (var (k, v) in OptionsFor(name)) ffmpeg.av_dict_set(&opts, k, v, 0);
-        if (name == "libopenh264") ctx->thread_count = Math.Clamp(Environment.ProcessorCount / 2, 1, 4);
+        if (name == "libopenh264")
+        {
+            ctx->thread_count = Math.Clamp(Environment.ProcessorCount / 2, 1, 4);
+            ctx->qmax = 51;   // FFmpeg's default qmax (31) would stop rate control from reaching the target
+        }
+        if (name == "h264_qsv")
+            // No NAL HRD signalling: with it, a live bitrate Reset starts a new sequence (new SPS + IDR), which
+            // breaks the strict 2 s keyframe cadence. Rate control is still CBR (maxrate == bitrate).
+            ctx->strict_std_compliance = ffmpeg.FF_COMPLIANCE_UNOFFICIAL;
 
         int r = ffmpeg.avcodec_open2(ctx, codec, &opts);
         ffmpeg.av_dict_free(&opts);
@@ -111,10 +119,16 @@ internal sealed unsafe class VideoEncoder : IDisposable
         ctx->rc_buffer_size = (int)(bps * 2);
     }
 
-    /// <summary>Live change (only when <see cref="SupportsLiveBitrate"/>): picked up by the next frame.</summary>
+    /// <summary>
+    /// Live change (only when <see cref="SupportsLiveBitrate"/>), picked up by the next frame: target and max rate
+    /// change, the VBV buffer keeps its size from <see cref="Open"/> (2 × start bitrate) because h264_qsv rejects
+    /// a buffer-size change in MFXVideoENCODE_Reset (MFX_ERR_INCOMPATIBLE_VIDEO_PARAM, verified on Iris Xe).
+    /// </summary>
     public void SetBitrateLive(int kbps)
     {
-        SetRate(_ctx, kbps);
+        long bps = kbps * 1000L;
+        _ctx->bit_rate = bps;
+        _ctx->rc_max_rate = bps;
         Kbps = kbps;
     }
 

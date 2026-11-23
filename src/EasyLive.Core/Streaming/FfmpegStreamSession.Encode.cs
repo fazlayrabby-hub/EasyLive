@@ -8,6 +8,8 @@ public sealed partial class FfmpegStreamSession
     private static readonly long Freq = Stopwatch.Frequency;
     private Action<nint>? _onAudioPacket;
     private bool _attachExtradata;           // next video packet carries the new SPS/PPS (after a re-open)
+    private bool _liveChangeUnverified;      // a live bitrate change was applied; the next send proves it
+    private bool _liveBitrateRejected;       // this encoder refused a live change: re-open from now on
 
     private unsafe void EncodeMain()
     {
@@ -57,7 +59,16 @@ public sealed partial class FfmpegStreamSession
 
                 if (!ApplyPending(ref clock, ref n, now, scratch)) return;
                 if (!EncodeAudio(audioLine, start, now, scratch)) return;
-                if (!EncodeVideoTick(n, scratch)) return;
+                if (!EncodeVideoTick(n, scratch, out bool liveChangeRejected)) return;
+                if (liveChangeRejected)
+                {
+                    // The encoder refused the live bitrate change: use the re-open path from now on (same connection).
+                    _liveBitrateRejected = true;
+                    var v = _video!;
+                    if (!ReopenVideo(v.Width, v.Height, v.Fps, v.Kbps, ref clock, ref n, now, scratch, drainOld: false)) return;
+                    FfmpegRuntime.Log("encode", $"live bitrate change rejected by {v.CodecName}; re-opened at {v.Kbps} kbps");
+                    continue;   // ReopenVideo moved n to the next tick
+                }
                 n++;
             }
             if (Volatile.Read(ref _failed) == 0) FlushEncoders(scratch);
@@ -65,15 +76,23 @@ public sealed partial class FfmpegStreamSession
         finally { ffmpeg.av_packet_free(&scratch); }
     }
 
-    private unsafe bool EncodeVideoTick(long n, AVPacket* scratch)
+    private unsafe bool EncodeVideoTick(long n, AVPacket* scratch, out bool liveChangeRejected)
     {
+        liveChangeRejected = false;
         _converter.TryConvertLatest(_videoFrame);   // false = nothing new: repeat the last picture
         _videoFrame->pts = n;
         _videoFrame->pict_type = _queue.TakeKeyframeRequest() ? AVPictureType.AV_PICTURE_TYPE_I : AVPictureType.AV_PICTURE_TYPE_NONE;
         int r = _video!.Send(_videoFrame);
+        bool unverified = _liveChangeUnverified;
+        _liveChangeUnverified = false;
         if (r < 0 && r != FfErrors.EAgain)
         {
             FfmpegRuntime.Log("encode", $"video send: {FfmpegRuntime.Describe(r)}");
+            if (unverified)
+            {
+                liveChangeRejected = true;
+                return true;
+            }
             RaiseFailed(ErrorTexts.EncoderFailed);
             return false;
         }

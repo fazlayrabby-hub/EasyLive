@@ -1,5 +1,4 @@
 using System.Runtime.InteropServices;
-using System.Text;
 using FFmpeg.AutoGen;
 
 namespace EasyLive.Core.Streaming;
@@ -13,6 +12,7 @@ internal static unsafe class FfmpegRuntime
 {
     private static readonly object Gate = new();
     private static readonly object FileGate = new();
+    private const long MaxLogBytes = 5 * 1024 * 1024;   // then rotated to ffmpeg.old.log
     private static readonly List<string> Secrets = new();
     private static bool _initialized;
     private static av_log_set_callback_callback? _callback;   // kept alive for the process lifetime
@@ -93,6 +93,8 @@ internal static unsafe class FfmpegRuntime
             lock (FileGate)
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
+                var info = new FileInfo(LogPath);
+                if (info.Exists && info.Length > MaxLogBytes) File.Move(LogPath, Path.ChangeExtension(LogPath, ".old.log"), overwrite: true);
                 File.AppendAllText(LogPath, line + Environment.NewLine);
             }
         }

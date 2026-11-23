@@ -74,18 +74,28 @@ public sealed partial class FfmpegStreamSession : IStreamSession
         FfmpegRuntime.AddSecret(UrlMasker.KeyPart(rtmpUrlWithKey));
         FfmpegRuntime.Log("session", $"start {UrlMasker.Mask(rtmpUrlWithKey)} encoder={plan.Encoder} rung={plan.Rung.Name} kbps={plan.StartKbps}");
 
-        var open = Task.Run(() => OpenAll(rtmpUrlWithKey, plan, ct), CancellationToken.None);
-        _openTask = open;
+        Task<string?> open;
+        lock (_gate)
+        {
+            if (_stopping) throw new ObjectDisposedException(nameof(FfmpegStreamSession));
+            open = Task.Run(() => OpenAll(rtmpUrlWithKey, plan, ct), CancellationToken.None);
+            _openTask = open;
+        }
         string? failure = await open.ConfigureAwait(false);
         if (ct.IsCancellationRequested) { _stopping = true; throw new OperationCanceledException(ct); }
         if (failure is not null) throw FailStart(failure);
-        if (_stopping) throw new ObjectDisposedException(nameof(FfmpegStreamSession));
 
-        _encodeThread = new Thread(EncodeMain) { IsBackground = true, Name = "EasyLive encode", Priority = ThreadPriority.AboveNormal };
-        _sendThread = new Thread(SendMain) { IsBackground = true, Name = "EasyLive send" };
-        _state = 2;
-        _encodeThread.Start();
-        _sendThread.Start();
+        // Under the lock: DisposeCore sets _stopping and reads the thread fields under the same lock, so it either
+        // sees both threads or none get started.
+        lock (_gate)
+        {
+            if (_stopping) throw new ObjectDisposedException(nameof(FfmpegStreamSession));
+            _encodeThread = new Thread(EncodeMain) { IsBackground = true, Name = "EasyLive encode", Priority = ThreadPriority.AboveNormal };
+            _sendThread = new Thread(SendMain) { IsBackground = true, Name = "EasyLive send" };
+            _state = 2;
+            _encodeThread.Start();
+            _sendThread.Start();
+        }
     }
 
     /// <summary>Opens encoders and the connection (blocking; thread pool). Returns a plain failure text or null.</summary>
@@ -138,7 +148,7 @@ public sealed partial class FfmpegStreamSession : IStreamSession
         }
         catch (Exception ex)
         {
-            FfmpegRuntime.Log("video", $"ingest failed: {ex.GetType().Name} {ex.Message}");   // never throw into the capture callback
+            FfmpegRuntime.Log("video", $"ingest failed: {ex}");   // never throw into the capture callback
         }
     }
 
@@ -191,18 +201,32 @@ public sealed partial class FfmpegStreamSession : IStreamSession
 
     private unsafe void DisposeCore()
     {
-        _stopping = true;
+        Task? openTask;
+        lock (_gate)
+        {
+            _stopping = true;
+            openTask = _openTask;
+        }
         _stopEvent.Set();
-        try { _openTask?.Wait(ConnectTimeoutMs + 2_000); } catch { /* reported via Failed */ }
+        // A connect in progress is bounded by its own 10 s deadline.
+        bool openDone = true;
+        try { openDone = openTask?.Wait(ConnectTimeoutMs + 2_000) ?? true; } catch { /* reported via Failed */ }
+        if (!openDone)
+        {
+            FfmpegRuntime.Log("session", "connect did not finish in time; native resources left allocated");
+            return;
+        }
 
-        bool encodeDone = Join(_encodeThread, JoinTimeoutMs);   // flushes the encoders when stopping normally
+        Thread? encode, send;
+        lock (_gate) { encode = _encodeThread; send = _sendThread; }
+        bool encodeDone = Join(encode, JoinTimeoutMs);   // flushes the encoders when stopping normally
         _queue.Complete();
-        bool sendDone = Join(_sendThread, JoinTimeoutMs);
+        bool sendDone = Join(send, JoinTimeoutMs);
         if (!sendDone || !encodeDone)
         {
             _muxer?.Abort();
-            sendDone = Join(_sendThread, 1_000);
-            encodeDone = Join(_encodeThread, 1_000);
+            sendDone = Join(send, 1_000);
+            encodeDone = Join(encode, 1_000);
         }
         if (!sendDone || !encodeDone)
         {

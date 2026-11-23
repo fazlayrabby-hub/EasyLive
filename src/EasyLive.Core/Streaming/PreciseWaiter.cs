@@ -15,6 +15,7 @@ internal sealed class PreciseWaiter : IDisposable
 
     private readonly TimerHandle _timer;
     private readonly WaitHandle _stop;
+    private readonly WaitHandle[] _both;
 
     public PreciseWaiter(WaitHandle stop)
     {
@@ -23,6 +24,7 @@ internal sealed class PreciseWaiter : IDisposable
         if (h.IsInvalid) h = CreateWaitableTimerExW(0, null, 0, TimerAllAccess);
         if (h.IsInvalid) throw new InvalidOperationException("Could not create a waitable timer.");
         _timer = new TimerHandle { SafeWaitHandle = h };
+        _both = new[] { _stop, _timer };
     }
 
     /// <summary>Returns false if the stop handle was signalled.</summary>
@@ -33,7 +35,7 @@ internal sealed class PreciseWaiter : IDisposable
         long due100ns = -(long)(remaining * 10_000_000.0 / Stopwatch.Frequency);   // negative = relative
         if (!SetWaitableTimer(_timer.SafeWaitHandle, ref due100ns, 0, 0, 0, false))
             return !_stop.WaitOne((int)Math.Ceiling(remaining * 1000.0 / Stopwatch.Frequency));
-        return WaitHandle.WaitAny(new[] { _stop, _timer }) != 0;
+        return WaitHandle.WaitAny(_both) != 0;
     }
 
     public void Dispose() => _timer.Dispose();

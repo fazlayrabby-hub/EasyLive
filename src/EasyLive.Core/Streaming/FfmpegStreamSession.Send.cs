@@ -57,9 +57,10 @@ public sealed partial class FfmpegStreamSession
             return ok;
         }
         if (kbps <= 0 || kbps == _video!.Kbps) return true;
-        if (_video.SupportsLiveBitrate)
+        if (_video.SupportsLiveBitrate && !_liveBitrateRejected)
         {
             _video.SetBitrateLive(kbps);
+            _liveChangeUnverified = true;    // if the next send fails, fall back to re-opening
             Volatile.Write(ref _currentKbps, kbps);
             FfmpegRuntime.Log("encode", $"bitrate {kbps} kbps (live)");
             return true;
@@ -73,10 +74,11 @@ public sealed partial class FfmpegStreamSession
     /// Replaces the video encoder on the same connection: drains the old one, opens the new one (its first frame is
     /// an IDR), sends the new SPS/PPS in-band as FLV new extradata and continues the timeline without a gap.
     /// </summary>
-    private unsafe bool ReopenVideo(int width, int height, int fps, int kbps, ref VideoClock clock, ref long n, long now, AVPacket* scratch)
+    private unsafe bool ReopenVideo(int width, int height, int fps, int kbps, ref VideoClock clock, ref long n, long now,
+        AVPacket* scratch, bool drainOld = true)
     {
         var old = _video!;
-        if (old.Send(null) >= 0 && !DrainVideo(scratch)) return false;
+        if (drainOld && old.Send(null) >= 0 && !DrainVideo(scratch)) return false;   // a broken encoder is just dropped
 
         var next = VideoEncoder.Open(old.Kind, width, height, fps, kbps);
         if (next is null)

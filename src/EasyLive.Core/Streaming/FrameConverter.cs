@@ -77,14 +77,21 @@ internal sealed unsafe class FrameConverter : IDisposable
 
     private void EnsureDevice(ID3D11Texture2D src)
     {
-        using var dev = src.Device;
-        if (_device is not null && _device.NativePointer == dev.NativePointer) return;
+        // ID3D11DeviceChild::GetDevice (vtable slot 3) returns an AddRef'd pointer that we own explicitly; the
+        // managed Device property hands out a wrapper whose disposal also invalidated the one we kept.
+        nint dev = 0;
+        ((delegate* unmanaged[Stdcall]<nint, nint*, void>)(*(nint**)src.NativePointer)[3])(src.NativePointer, &dev);
+        if (_device is not null && _device.NativePointer == dev)
+        {
+            Marshal.Release(dev);
+            return;
+        }
         foreach (var s in _slots) RetireSlot(s);
         _slots.Clear();
         _latest = null;
         _context?.Dispose();
         _device?.Dispose();
-        _device = src.Device;                                   // own reference
+        _device = new ID3D11Device(dev);                        // owns the GetDevice reference
         using (var mt = _device.QueryInterfaceOrNull<ID3D11Multithread>())
             mt?.SetMultithreadProtected(true);                  // capture + encode threads share the immediate context
         _context = _device.ImmediateContext;
@@ -141,7 +148,9 @@ internal sealed unsafe class FrameConverter : IDisposable
             if (_disposed || _latest is null || _latest.Seq == _lastConvertedSeq) return false;
             slot = _latest;
             slot.State = SlotState.Busy;
-            context = _context!;
+            // Own reference: a device change on the capture thread may dispose _context while we map.
+            Marshal.AddRef(_context!.NativePointer);
+            context = new ID3D11DeviceContext(_context.NativePointer);
             _lastConvertedSeq = slot.Seq;
         }
         bool ok = false;
@@ -153,6 +162,7 @@ internal sealed unsafe class FrameConverter : IDisposable
         }
         finally
         {
+            context.Dispose();
             lock (_gate)
             {
                 if (slot.Stale) slot.Texture.Dispose();
@@ -175,9 +185,8 @@ internal sealed unsafe class FrameConverter : IDisposable
             var coeffs = new int_array4();
             int* bt709 = ffmpeg.sws_getCoefficients(ffmpeg.SWS_CS_ITU709);
             for (uint i = 0; i < 4; i++) coeffs[i] = bt709[i];
-            var dstCoeffs = coeffs;
             // RGB in full range -> BT.709 limited range YUV (matches what the encoder signals).
-            ffmpeg.sws_setColorspaceDetails(_sws, ref coeffs, 1, ref dstCoeffs, 0, 0, 1 << 16, 1 << 16);
+            ffmpeg.sws_setColorspaceDetails(_sws, in coeffs, 1, in coeffs, 0, 0, 1 << 16, 1 << 16);
         }
         if (ffmpeg.av_frame_make_writable(dst) < 0) return false;   // the encoder may still hold the previous picture
         var srcSlice = new[] { src, null, null, null };
