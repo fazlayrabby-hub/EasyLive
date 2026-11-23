@@ -10,6 +10,7 @@ public sealed partial class FfmpegStreamSession
     private bool _attachExtradata;           // next video packet carries the new SPS/PPS (after a re-open)
     private bool _liveChangeUnverified;      // a live bitrate change was applied; the next send proves it
     private bool _liveBitrateRejected;       // this encoder refused a live change: re-open from now on
+    private long _lastKeyMs = KeyframePolicy.None;   // stream time (ms) of the last keyframe, forced or encoder-made
 
     private unsafe void EncodeMain()
     {
@@ -57,15 +58,15 @@ public sealed partial class FfmpegStreamSession
                 }
                 Volatile.Write(ref _encodeLagMs, (int)Math.Max(0, (now - clock.TickQpc(n)) * 1000 / Freq));
 
-                if (!ApplyPending(ref clock, ref n, now, scratch)) return;
+                if (!ApplyPending(ref clock, ref n, scratch)) return;
                 if (!EncodeAudio(audioLine, start, now, scratch)) return;
-                if (!EncodeVideoTick(n, scratch, out bool liveChangeRejected)) return;
+                if (!EncodeVideoTick(n, clock.ToMs(clock.TickQpc(n)), scratch, out bool liveChangeRejected)) return;
                 if (liveChangeRejected)
                 {
                     // The encoder refused the live bitrate change: use the re-open path from now on (same connection).
                     _liveBitrateRejected = true;
                     var v = _video!;
-                    if (!ReopenVideo(v.Width, v.Height, v.Fps, v.Kbps, ref clock, ref n, now, scratch, drainOld: false)) return;
+                    if (!ReopenVideo(v.Width, v.Height, v.Fps, v.Kbps, ref clock, ref n, scratch, drainOld: false)) return;
                     FfmpegRuntime.Log("encode", $"live bitrate change rejected by {v.CodecName}; re-opened at {v.Kbps} kbps");
                     continue;   // ReopenVideo moved n to the next tick
                 }
@@ -76,12 +77,15 @@ public sealed partial class FfmpegStreamSession
         finally { ffmpeg.av_packet_free(&scratch); }
     }
 
-    private unsafe bool EncodeVideoTick(long n, AVPacket* scratch, out bool liveChangeRejected)
+    private unsafe bool EncodeVideoTick(long n, long ptsMs, AVPacket* scratch, out bool liveChangeRejected)
     {
         liveChangeRejected = false;
         _converter.TryConvertLatest(_videoFrame);   // false = nothing new: repeat the last picture
         _videoFrame->pts = n;
-        _videoFrame->pict_type = _queue.TakeKeyframeRequest() ? AVPictureType.AV_PICTURE_TYPE_I : AVPictureType.AV_PICTURE_TYPE_NONE;
+        // Keyframes by time (2 s), so skipped ticks or a re-open cannot stretch the interval; plus send-queue requests.
+        bool forceKey = _queue.TakeKeyframeRequest() | KeyframePolicy.ShouldForce(ptsMs, _lastKeyMs);
+        if (forceKey) _lastKeyMs = ptsMs;
+        _videoFrame->pict_type = forceKey ? AVPictureType.AV_PICTURE_TYPE_I : AVPictureType.AV_PICTURE_TYPE_NONE;
         int r = _video!.Send(_videoFrame);
         bool unverified = _liveChangeUnverified;
         _liveChangeUnverified = false;
@@ -111,6 +115,11 @@ public sealed partial class FfmpegStreamSession
                 RaiseFailed(ErrorTexts.EncoderFailed);
                 return false;
             }
+            if ((scratch->flags & ffmpeg.AV_PKT_FLAG_KEY) != 0 && scratch->pts != ffmpeg.AV_NOPTS_VALUE)
+            {
+                long keyMs = ffmpeg.av_rescale_q(scratch->pts, _video.TimeBase, new AVRational { num = 1, den = 1000 });
+                if (keyMs > _lastKeyMs) _lastKeyMs = keyMs;   // encoder-made keyframes (GOP, scene cut) count too
+            }
             if (_attachExtradata)
             {
                 var extra = _video.Extradata;
@@ -137,7 +146,11 @@ public sealed partial class FfmpegStreamSession
         long ts = p->dts != ffmpeg.AV_NOPTS_VALUE ? p->dts : p->pts;
         long dtsMs = ffmpeg.av_rescale_q(ts, stTb, new AVRational { num = 1, den = 1000 });
         bool key = !isVideo || (p->flags & ffmpeg.AV_PKT_FLAG_KEY) != 0;
-        _queue.Enqueue((nint)p, isVideo, key, dtsMs);
+        if (!_queue.Enqueue((nint)p, isVideo, key, dtsMs))
+        {
+            FfmpegRuntime.Log("send", "send queue exceeded its ceiling (the link cannot keep up)");
+            RaiseFailed(ErrorTexts.ConnectionLost);
+        }
     }
 
     private unsafe bool EncodeAudio(AudioTimeline line, long start, long now, AVPacket* scratch)

@@ -28,7 +28,9 @@ public interface IStreamSession : IAsyncDisposable
     /// <summary>Changes the video bitrate live, without reconnecting.</summary>
     void SetBitrate(int kbps);
 
-    /// <summary>Restarts the video encoder at a lower rung (new keyframe) on the same connection.</summary>
+    /// <summary>Restarts the video encoder at a lower rung (new keyframe) on the same connection. The task faults with
+    /// <see cref="StreamSessionException"/> if the switch failed (<see cref="Failed"/> is raised too) and is cancelled if
+    /// the session stopped first.</summary>
     Task ReinitAsync(QualityRung lower);
 
     StreamHealth Health { get; }

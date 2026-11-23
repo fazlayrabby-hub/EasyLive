@@ -18,6 +18,8 @@ public sealed partial class FfmpegStreamSession : IStreamSession
     private const int ConnectTimeoutMs = 10_000;
     private const int WriteTimeoutMs = 10_000;
     private const int MaxQueueMs = 3_000;
+    private const int QueueLowWaterMs = 2_000;            // drop hysteresis: shed delta frames down to 2 s of video
+    private const int QueueCeilingMs = 15_000;            // beyond this the link is treated as lost
     private const int FirstFrameTimeoutMs = 5_000;
     private const int JoinTimeoutMs = 3_000;
     private const int MaxPendingAudioChunks = 500;          // 5 s of 10 ms chunks
@@ -51,7 +53,7 @@ public sealed partial class FfmpegStreamSession : IStreamSession
 
     public unsafe FfmpegStreamSession()
     {
-        _queue = new SendQueue<nint>(MaxQueueMs, p => { var pkt = (AVPacket*)p; ffmpeg.av_packet_free(&pkt); });
+        _queue = new SendQueue<nint>(MaxQueueMs, p => { var pkt = (AVPacket*)p; ffmpeg.av_packet_free(&pkt); }, QueueLowWaterMs, QueueCeilingMs);
     }
 
     public event Action<string>? Failed;
@@ -71,7 +73,7 @@ public sealed partial class FfmpegStreamSession : IStreamSession
         Volatile.Write(ref _currentKbps, plan.StartKbps);
 
         if (!FfmpegRuntime.TryInitialize()) throw FailStart(ErrorTexts.ComponentsMissing);
-        FfmpegRuntime.AddSecret(UrlMasker.KeyPart(rtmpUrlWithKey));
+        foreach (var secret in UrlMasker.SecretParts(rtmpUrlWithKey)) FfmpegRuntime.AddSecret(secret);
         FfmpegRuntime.Log("session", $"start {UrlMasker.Mask(rtmpUrlWithKey)} encoder={plan.Encoder} rung={plan.Rung.Name} kbps={plan.StartKbps}");
 
         Task<string?> open;
@@ -182,10 +184,10 @@ public sealed partial class FfmpegStreamSession : IStreamSession
         if (Interlocked.Exchange(ref _failed, 1) != 0) return;
         FfmpegRuntime.Log("session", "failed: " + message);
         _stopping = true;
-        _stopEvent.Set();
+        try { _stopEvent.Set(); } catch (ObjectDisposedException) { /* already disposed: nothing to wake */ }
         _muxer?.Abort();
         _queue.Complete();
-        lock (_gate) { _pendingReinit?.Done.TrySetResult(); _pendingReinit = null; }
+        lock (_gate) { _pendingReinit?.Done.TrySetException(new StreamSessionException(message)); _pendingReinit = null; }
         ThreadPool.UnsafeQueueUserWorkItem(_ =>
         {
             try { Failed?.Invoke(message); }
@@ -206,6 +208,8 @@ public sealed partial class FfmpegStreamSession : IStreamSession
         {
             _stopping = true;
             openTask = _openTask;
+            _pendingReinit?.Done.TrySetCanceled();   // stopped before the encode thread picked it up
+            _pendingReinit = null;
         }
         _stopEvent.Set();
         // A connect in progress is bounded by its own 10 s deadline.
@@ -251,6 +255,8 @@ public sealed partial class FfmpegStreamSession : IStreamSession
         _videoFrame = null;
         if (frame != null) ffmpeg.av_frame_free(&frame);
         _converter.Dispose();
+        _stopEvent.Dispose();    // the workers are gone; late Set calls are guarded
+        _frameEvent.Dispose();
         FfmpegRuntime.Log("session", "stopped");
     }
 

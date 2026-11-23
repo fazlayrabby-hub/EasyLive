@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using FFmpeg.AutoGen;
 
 namespace EasyLive.Core.Streaming;
@@ -28,6 +29,8 @@ internal sealed unsafe class VideoEncoder : IDisposable
     public int Height { get; }
     public int Fps { get; }
     public int Kbps { get; private set; }
+    /// <summary>Encoder options FFmpeg did not consume at open (also logged).</summary>
+    public IReadOnlyList<string> UnusedOptionNames { get; private init; } = Array.Empty<string>();
     public AVCodecContext* Context => _ctx;
     public AVRational TimeBase => _ctx->time_base;
     public AVPixelFormat InputFormat => _ctx->pix_fmt;
@@ -49,9 +52,9 @@ internal sealed unsafe class VideoEncoder : IDisposable
     };
 
     /// <summary>Opens the encoder; returns null (and logs why) if this PC cannot run it.</summary>
-    public static VideoEncoder? Open(EncoderKind kind, int width, int height, int fps, int kbps)
+    public static VideoEncoder? Open(EncoderKind kind, int width, int height, int fps, int kbps, string? codecName = null)
     {
-        string name = CodecNameFor(kind);
+        string name = codecName ?? CodecNameFor(kind);
         AVCodec* codec = ffmpeg.avcodec_find_encoder_by_name(name);
         if (codec == null)
         {
@@ -90,6 +93,7 @@ internal sealed unsafe class VideoEncoder : IDisposable
             ctx->strict_std_compliance = ffmpeg.FF_COMPLIANCE_UNOFFICIAL;
 
         int r = ffmpeg.avcodec_open2(ctx, codec, &opts);
+        var unused = UnusedOptions(name, opts);   // keyframe/rate guarantees depend on these being honoured
         ffmpeg.av_dict_free(&opts);
         if (r < 0)
         {
@@ -98,7 +102,18 @@ internal sealed unsafe class VideoEncoder : IDisposable
             return null;
         }
         FfmpegRuntime.Log("video", $"{name} opened {width}x{height}@{fps} {kbps} kbps, extradata {ctx->extradata_size} bytes");
-        return new VideoEncoder(ctx, kind, name, width, height, fps, kbps);
+        return new VideoEncoder(ctx, kind, name, width, height, fps, kbps) { UnusedOptionNames = unused };
+    }
+
+    /// <summary>avcodec_open2 leaves the options the encoder did not recognise in the dictionary.</summary>
+    private static IReadOnlyList<string> UnusedOptions(string name, AVDictionary* opts)
+    {
+        var unused = new List<string>();
+        AVDictionaryEntry* e = null;
+        while ((e = ffmpeg.av_dict_get(opts, "", e, ffmpeg.AV_DICT_IGNORE_SUFFIX)) != null)
+            unused.Add($"{Marshal.PtrToStringAnsi((nint)e->key)}={Marshal.PtrToStringAnsi((nint)e->value)}");
+        FfmpegRuntime.Log("video", unused.Count == 0 ? $"{name}: all options accepted" : $"{name}: options NOT used: {string.Join(", ", unused)}");
+        return unused;
     }
 
     private static IEnumerable<(string, string)> OptionsFor(string name) => name switch

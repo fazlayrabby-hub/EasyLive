@@ -161,6 +161,8 @@ public class StreamSessionIntegrationTests
         Assert.InRange(after, 500, 1400);
         Assert.True(ProbeResult.MaxGap(vp) < 1.0, $"video gap {ProbeResult.MaxGap(vp):F3}s");
         Assert.True(ProbeResult.MaxGap(probe.AudioPackets) < 1.0, $"audio gap {ProbeResult.MaxGap(probe.AudioPackets):F3}s");
+        // Keyframes at least every 2 s across the change, including the re-open path (new encoder, new IDR).
+        Assert.All(ProbeResult.KeyframeIntervals(vp), k => Assert.True(k <= 2.2, $"keyframe interval {k:F2}s"));
         if (!fallback && session.VideoCodecName is "h264_qsv" or "h264_nvenc")
         {
             Assert.Equal(0, session.VideoReopenCount);   // truly live: same encoder session
@@ -209,7 +211,28 @@ public class StreamSessionIntegrationTests
         Assert.True(reinitMs < 1000, $"reinit took {reinitMs:F0} ms");
         Assert.Equal((854, 480), (afterProbe.Video!.Width, afterProbe.Video.Height));
         Assert.Equal("High", afterProbe.Video.Profile);
+        // Facebook: a keyframe at least every 2 s, also right after the switch (re-open must not stretch the GOP).
+        var spanKeys = ProbeResult.KeyframeIntervals(spanning.VideoPackets);
+        Assert.True(spanKeys.Count >= 2, "too few keyframes seen across the switch");
+        Assert.All(spanKeys, k => Assert.True(k <= 2.2, $"keyframe interval {k:F2}s across the switch"));
+        Assert.All(ProbeResult.KeyframeIntervals(afterProbe.VideoPackets), k => Assert.True(k <= 2.2, $"keyframe interval {k:F2}s after the switch"));
         Assert.True(ProbeResult.MaxGap(spanning.VideoPackets) < 1.0, $"video gap {ProbeResult.MaxGap(spanning.VideoPackets):F3}s across the switch");
+    }
+
+    // The keyframe/rate guarantees rely on encoder options (forced IDR, CBR, ...): every one must be consumed.
+    [SkippableTheory]
+    [InlineData("h264_qsv")]
+    [InlineData("libopenh264")]
+    [InlineData("h264_mf")]
+    public void Encoder_accepts_every_option_we_set(string codec)
+    {
+        Skip.IfNot(FfmpegRuntime.TryInitialize(), "FFmpeg LGPL shared DLLs not found (see tools/README.md).");
+        var kind = codec == "h264_qsv" ? EncoderKind.QuickSync : EncoderKind.OpenH264;
+        Skip.If(kind != EncoderKind.OpenH264 && BestEncoder() != kind, $"{codec} is not available on this PC");
+        using var enc = EasyLive.Core.Streaming.VideoEncoder.Open(kind, 1280, 720, 30, 2500, codec);
+        Assert.NotNull(enc);
+        _out.WriteLine($"{codec}: unused options = [{string.Join(", ", enc!.UnusedOptionNames)}]");
+        Assert.Empty(enc.UnusedOptionNames);
     }
 
     // (d): nothing listening.

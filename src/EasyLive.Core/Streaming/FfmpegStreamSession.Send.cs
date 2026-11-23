@@ -37,7 +37,7 @@ public sealed partial class FfmpegStreamSession
     }
 
     /// <summary>Encode thread: applies a requested bitrate change or rung change. False if the session failed.</summary>
-    private unsafe bool ApplyPending(ref VideoClock clock, ref long n, long now, AVPacket* scratch)
+    private unsafe bool ApplyPending(ref VideoClock clock, ref long n, AVPacket* scratch)
     {
         int kbps = Interlocked.Exchange(ref _pendingKbps, 0);
         (QualityRung Rung, TaskCompletionSource Done)? reinit;
@@ -51,9 +51,13 @@ public sealed partial class FfmpegStreamSession
         {
             var r = re.Rung;
             int target = Math.Clamp(kbps > 0 ? kbps : Volatile.Read(ref _currentKbps), r.MinKbps, r.MaxKbps);
-            bool ok = ReopenVideo(r.Width, r.Height, r.Fps, target, ref clock, ref n, now, scratch);
-            re.Done.TrySetResult();
-            if (ok) FfmpegRuntime.Log("encode", $"reinit to {r.Name} at {target} kbps");
+            bool ok = ReopenVideo(r.Width, r.Height, r.Fps, target, ref clock, ref n, scratch);
+            if (ok)
+            {
+                re.Done.TrySetResult();
+                FfmpegRuntime.Log("encode", $"reinit to {r.Name} at {target} kbps");
+            }
+            else re.Done.TrySetException(new StreamSessionException(ErrorTexts.EncoderFailed));   // Failed was raised too
             return ok;
         }
         if (kbps <= 0 || kbps == _video!.Kbps) return true;
@@ -65,7 +69,7 @@ public sealed partial class FfmpegStreamSession
             FfmpegRuntime.Log("encode", $"bitrate {kbps} kbps (live)");
             return true;
         }
-        bool reopened = ReopenVideo(_video.Width, _video.Height, _video.Fps, kbps, ref clock, ref n, now, scratch);
+        bool reopened = ReopenVideo(_video.Width, _video.Height, _video.Fps, kbps, ref clock, ref n, scratch);
         if (reopened) FfmpegRuntime.Log("encode", $"bitrate {kbps} kbps (encoder re-opened)");
         return reopened;
     }
@@ -74,7 +78,7 @@ public sealed partial class FfmpegStreamSession
     /// Replaces the video encoder on the same connection: drains the old one, opens the new one (its first frame is
     /// an IDR), sends the new SPS/PPS in-band as FLV new extradata and continues the timeline without a gap.
     /// </summary>
-    private unsafe bool ReopenVideo(int width, int height, int fps, int kbps, ref VideoClock clock, ref long n, long now,
+    private unsafe bool ReopenVideo(int width, int height, int fps, int kbps, ref VideoClock clock, ref long n,
         AVPacket* scratch, bool drainOld = true)
     {
         var old = _video!;
@@ -101,9 +105,11 @@ public sealed partial class FfmpegStreamSession
         _converter.ReconvertLatest();          // the new-size picture must come from the latest capture, not black
         _attachExtradata = true;
 
-        // Next tick strictly after the last one sent so timestamps keep increasing.
+        // Next tick strictly after the last one sent so timestamps keep increasing. "Now" is read AFTER the open
+        // (QSV takes ~350 ms): a stale time would make the loop think it is behind and skip ticks.
         clock = new VideoClock(clock.TickQpc(0), Freq, fps);
-        n = clock.TickIndexAt(now) + 1;
+        n = clock.TickIndexAt(Stopwatch.GetTimestamp()) + 1;
+        _lastKeyMs = KeyframePolicy.None;   // the new encoder starts with an IDR; force it explicitly as well
         Volatile.Write(ref _currentKbps, kbps);
         VideoReopenCount++;
         return true;

@@ -83,6 +83,40 @@ public class UrlMaskerTests
     }
 }
 
+public class UrlSecretsTests
+{
+    [Fact]
+    public void Facebook_style_key_registers_whole_key_base_key_and_long_query_values_raw_and_decoded()
+    {
+        var secrets = UrlMasker.SecretParts("rtmps://live-api-s.facebook.com:443/rtmp/FB-123456789-0-AbCdEf?s_bl=1&a=SECRET%2BVALUE");
+        Assert.Contains("FB-123456789-0-AbCdEf?s_bl=1&a=SECRET%2BVALUE", secrets);
+        Assert.Contains("FB-123456789-0-AbCdEf", secrets);
+        Assert.Contains("SECRET%2BVALUE", secrets);
+        Assert.Contains("SECRET+VALUE", secrets);              // URL-decoded form
+        Assert.DoesNotContain("1", secrets);                     // too short to redact without mangling the log
+        Assert.DoesNotContain("rtmp", secrets);
+    }
+
+    [Fact]
+    public void Url_without_key_has_no_secrets() => Assert.Empty(UrlMasker.SecretParts("rtmp://host/app"));
+}
+
+public class KeyframePolicyTests
+{
+    [Theory]
+    [InlineData(1966, 0, false)]     // 59 frames at 30 fps after the last keyframe
+    [InlineData(2000, 0, true)]      // the 2 s boundary
+    [InlineData(2333, 0, true)]      // ticks were skipped: still force as soon as 2 s passed
+    [InlineData(4000, 2000, true)]
+    [InlineData(3100, 2033, false)]  // an encoder-made keyframe at 2033 restarts the 2 s
+    public void Forces_a_keyframe_once_2s_of_stream_time_passed_since_the_last(long ptsMs, long lastKeyMs, bool expected) =>
+        Assert.Equal(expected, KeyframePolicy.ShouldForce(ptsMs, lastKeyMs));
+
+    [Fact]
+    public void Forces_when_there_was_no_keyframe_yet() =>
+        Assert.True(KeyframePolicy.ShouldForce(0, KeyframePolicy.None));
+}
+
 public class FfmpegLocatorTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "easylive-locator-" + Guid.NewGuid().ToString("N"));
