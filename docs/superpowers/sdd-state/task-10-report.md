@@ -106,3 +106,55 @@ Command: `dotnet test tests/EasyLive.Core.Tests`. Result: **Passed 195, Skipped 
 5. **Stop during a connect can take up to ~12 s,** because `FfmpegStreamSession` connect is not cancellable (deferred T9 minor). Teardown waits for the Go Live attempt to unwind.
 6. **The retry cadence is "5 s after the previous attempt ended".** A real failing connect can take up to ~12 s, so real attempts are roughly 17 s apart. The 120 s deadline is checked after each failed attempt, so the final Failed can come up to one connect timeout after 120 s.
 7. **StatusChanged runs on whichever thread caused the change** (capture, timer, thread pool). Task 11 must marshal to the UI thread.
+
+# Fix round 1 (review findings), commit `c1d7106` "fix: orchestrator reconnect deadline, static-black warning, teardown"
+
+Fix base: `ce77664`. Tests were written first. RED: compile error on `NoPictureMessage`, then 6 behaviour failures (deadline, minimized, NoPicture, static black, dropped-session dispose wait, plus one test-design bug that I fixed: after a reconnect the bitrate is already at the rung floor, so the "ticks resume" check now expects a Reinit rather than a SetBitrate).
+
+## Rulings applied (ledger updated)
+- **A. Minimized vs closed.** A `Closed` message equal to `CaptureStallMonitor.MinimizedMessage` only shows the message: the state stays Live, there is no 10 s countdown and the stream does not stop. A later frame clears it. Any other `Closed` message starts (or keeps) the 10 s countdown, which ends in Failed "Stopped — <that message>". The countdown message is now stored separately (`HoldMessage`), so a later "minimized" notice cannot change the text it stops with.
+- **B. NoPicture cannot be fixed by retrying.** It ends at once in Failed with the new message `NoPictureMessage`: "Nothing to stream — the screen or window you picked isn't showing a picture. If it's minimized, bring it back and press Go Live again." The same mapping is applied to Go Live failures and to failures during a retry (`UserMessage`).
+
+## Important fixes
+1. **The reconnect deadline no longer resets on every brief recovery.**
+   - The run now records `FailureWindowStart` (nullable) and `LastLiveAt`.
+   - A new failure opens a new 120 s window only if no window exists yet, or if the stream had been Live for at least 60 s since its last (re)start.
+   - The deadline is also checked when the session fails. A flapping connection where every retry succeeds therefore ends in Failed "connection could not be restored" about 120 s after the first failure.
+   - Tests:
+     - `Reconnect_deadline_is_not_reset_by_brief_recoveries`: a 7 s fail/recover cycle ends in Failed at t ∈ [120, 127].
+     - `Failure_after_60_s_stable_gets_a_fresh_reconnect_window`: still Reconnecting 115 s after a second failure that came after 100 s of stable streaming.
+2. **A static black picture now triggers the warning.**
+   - The 1 s tick (`RefeedBlank`, under the same `Sampling` flag, run before the TickBusy check so it still works during a reinit) feeds the last sample to `Blank.Observe` again whenever no newer sample has arrived for 500 ms or more.
+   - It also collects a GPU copy that was still pending (see 5).
+   - Tests:
+     - `Static_black_picture_warns_from_the_tick_without_new_frames`: one black frame followed only by clock advances shows the warning after 3 s, the state stays Live, and a bright frame clears it.
+     - `Pending_gpu_sample_is_collected_on_the_tick`.
+
+## Minor fixes
+3. **Session dispose and teardown wait for every session.**
+   - `Slot.DisposeAsync` creates its dispose task once (`Task.Run`, so it never runs on the caller's thread) and hands the same task to every caller.
+   - All disposals go through `DisposeSlot`, which tracks the ones still running. Teardown, `StopAsync` and the next `GoLiveAsync` all wait for them, including sessions dropped during a reconnect.
+   - Test: `Stop_waits_for_sessions_dropped_while_reconnecting_and_disposes_once`. Stop does not complete while the dropped session's dispose is blocked, and DisposeAsync is called exactly once.
+4. **Teardown never runs on the caller's thread.** `EndRunAsync` runs it through `Task.Run`.
+   - The `StatusChanged` documentation now says the event is raised on background threads and that handlers must not block: the UI should use `Dispatcher.BeginInvoke`.
+5. **`D3D11FrameSampler` changes:**
+   - It maps the staging texture with `MapFlags.DoNotWait`. On `DXGI_ERROR_WAS_STILL_DRAWING` the copy stays pending and the call returns null; the new `IFrameSampler.TryReadPending()` collects it later from any thread without waiting, and the orchestrator calls it on the tick.
+   - The new `IFrameSampler.Reset()` releases the staging texture, context and device reference. Teardown calls it after capture has stopped.
+   - The two D3D11 tests now poll Sample/TryReadPending and cover Reset.
+   - **Interface change:** `IFrameSampler` gained `TryReadPending()` and `Reset()`.
+6. **Test gaps closed.** New tests cover:
+   - capture restart throwing after a reconnect gives Failed "Stopped — The screen or window you picked could not be captured.";
+   - the session failing between StartAsync returning and Live gives Failed with no reconnect;
+   - Failed during an in-flight ReinitAsync: the stale completion is ignored, the reconnect stays at 720p30, and ticks resume (a later Reinit happens on the new session);
+   - Stop during an in-flight ReinitAsync stays Stopped;
+   - Reinit on hardware goes from 1080p60 to 1080p30, and with OpenH264 from 720p30 to 480p30;
+   - `Failed_from_thread_pool_while_frames_flow_and_stop_races`: Failed raised through Task.Run while another thread raises frames continuously, then a stale Failed and Stop run concurrently.
+   - Also: minimized shows a message without a countdown; a Closed after a minimized notice still stops after 10 s; NoPicture is not retried.
+
+## Results
+`dotnet test tests/EasyLive.Core.Tests`: **Passed 210, Skipped 5, Failed 0** (was 195; 15 new tests). The orchestrator and sampler tests (44) were run 5 more times: green every time, about 0.7 s per run. Build: 0 warnings.
+
+## Disagreements / notes
+- None on substance.
+- **Item 5 needed more than the review asked for.** A sampler that maps without waiting and simply skips when the GPU is busy would almost always skip, because the map comes right after the copy. With static content no second frame ever arrives, so the sample would never be read. That is why `TryReadPending()` exists and why the tick collects pending copies.
+- **Item 4:** I used `Task.Run` rather than `Task.Yield`, because `Task.Yield` resumes on a UI SynchronizationContext if there is one.
