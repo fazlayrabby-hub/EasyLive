@@ -72,3 +72,10 @@ Fix base: bcf23f9. Tests: Passed 234, Skipped 5, Failed 0 (4 more than before in
 - `MainWindow.xaml`: two overlay layers fade in over 400 ms driven by `State`: crimson gradient (#3B0A14 to #8B1020) with a pulsing bright border while Live, and an amber pulsing layer while Reconnecting. They fade out in 400 ms when the stream ends. A title-bar pill shows a pulsing white dot with "ON AIR" (red) or "RECONNECTING" (amber). The Go Live button keeps its green/cyan "YOU'RE LIVE" look, which stands out well on red. No logic changes.
 - Also fixed a bug found in the screenshot: the picker showed "CaptureTarget { Title = ... }" after selecting a source (the custom ComboBox template ignored DisplayMemberPath); it now uses an ItemTemplate.
 - Seen on screen (live, via MediaMTX): deep crimson window, translucent red-tinted cards, readable text, the ON AIR pill, a pulsing red border. Reconnecting amber was NOT seen on screen (needs a dropped connection); the 400 ms fade was not observed frame by frame.
+
+
+# App logo and icon (commit "feat: app logo and icon")
+- `build/make-logo.ps1` (System.Drawing only, reproducible) draws a glossy rounded-square badge (cyan, violet, magenta gradient, bevel, top highlight, soft drop shadow) with a white play triangle and two broadcast arcs, and writes `assets/logo.png` (256 px) and `assets/EasyLive.ico` (16, 24, 32, 48, 64, 128, 256 px, PNG entries). Both generated files are committed.
+- Wired: `<ApplicationIcon>` (exe icon) and the two assets as WPF resources in `EasyLive.App.csproj` (minimal edit), `Window Icon` in `MainWindow.xaml`, a 24 px logo in the custom title bar replacing the dot, and `SetCurrentProcessExplicitAppUserModelID("EasyLive.App")` at startup so the taskbar groups the window.
+- Seen on screen: the logo in the title bar next to EASYLIVE (idle and live) and the logo as the taskbar button icon while the app runs (cropped taskbar screenshot, red running indicator under it). The badge reads clearly at taskbar size.
+- Not checked: the exe icon in File Explorer, 16 px rendering in the title bar tray or alt-tab, and the icon at high DPI.

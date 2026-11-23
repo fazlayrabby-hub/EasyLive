@@ -31,9 +31,13 @@ public partial class App : Application
         return null;
     }
 
+    [System.Runtime.InteropServices.DllImport("shell32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int SetCurrentProcessExplicitAppUserModelID(string appId);
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        try { SetCurrentProcessExplicitAppUserModelID("EasyLive.App"); } catch { /* taskbar grouping only */ }
         DispatcherUnhandledException += (_, ex) =>
         {
             ex.Handled = true;
@@ -99,4 +103,5 @@ public partial class App : Application
         base.OnExit(e);
     }
 }
+
 

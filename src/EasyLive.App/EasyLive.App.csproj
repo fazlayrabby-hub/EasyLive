@@ -9,7 +9,13 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>EasyLive.App</RootNamespace>
     <AssemblyName>EasyLive</AssemblyName>
+    <ApplicationIcon>..\..\assets\EasyLive.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="..\..\assets\EasyLive.ico" Link="Assets\EasyLive.ico" />
+    <Resource Include="..\..\assets\logo.png" Link="Assets\logo.png" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\EasyLive.Core\EasyLive.Core.csproj" />
