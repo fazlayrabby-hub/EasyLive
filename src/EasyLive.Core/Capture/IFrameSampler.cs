@@ -8,24 +8,34 @@ namespace EasyLive.Core.Capture;
 /// <summary>Reads a sparse BGRA sample of a captured frame for <see cref="BlankFrameDetector"/>.</summary>
 public interface IFrameSampler
 {
-    /// <summary>Call only inside <see cref="IFrameSource.FrameArrived"/> (the texture is callback-scoped).
-    /// Returns BGRA bytes of a few pixels spread over the frame, or null if no sample could be taken.</summary>
+    /// <summary>Call only inside <see cref="IFrameSource.FrameArrived"/> (the texture is callback-scoped). Queues a
+    /// copy of a few pixels spread over the frame and returns their BGRA bytes if the copy is already readable, or
+    /// null (not ready yet: collect it later with <see cref="TryReadPending"/>; or no sample possible).</summary>
     byte[]? Sample(CaptureFrame f);
+
+    /// <summary>Any thread: the bytes of the last queued copy if the GPU has finished it, otherwise null. Never waits.</summary>
+    byte[]? TryReadPending();
+
+    /// <summary>Releases cached GPU resources (and the device reference). The next <see cref="Sample"/> recreates them.</summary>
+    void Reset();
 }
 
 /// <summary>
-/// Copies an 8x8 grid of single pixels from the capture texture into a small cached CPU-readable staging texture
-/// on the texture's own device, maps it and returns the 64 BGRA pixels (256 bytes). Never throws; null on failure.
-/// The Map waits for the GPU copy, so callers sample sparingly (the orchestrator does so at most every 500 ms).
+/// Copies an 8x8 grid of single pixels from the capture texture into a small cached CPU-readable staging texture on
+/// the texture's own device, then maps it without waiting (<c>D3D11_MAP_FLAG_DO_NOT_WAIT</c>); if the GPU is still
+/// busy the copy stays pending and is read by a later <see cref="TryReadPending"/>/<see cref="Sample"/>. Returns
+/// 64 BGRA pixels (256 bytes). Never throws; null on failure.
 /// </summary>
 public sealed unsafe class D3D11FrameSampler : IFrameSampler, IDisposable
 {
     public const int Grid = 8;
+    private const int DxgiErrorWasStillDrawing = unchecked((int)0x887A000A);
 
     private readonly object _gate = new();
     private ID3D11Device? _device;
     private ID3D11DeviceContext? _context;
     private ID3D11Texture2D? _staging;
+    private bool _pending;
     private bool _disposed;
 
     public byte[]? Sample(CaptureFrame f)
@@ -53,23 +63,48 @@ public sealed unsafe class D3D11FrameSampler : IFrameSampler, IDisposable
                             new Box(sx, sy, 0, sx + 1, sy + 1, 1));
                     }
                 }
-
-                var mapped = _context!.Map(_staging!, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
-                try
-                {
-                    var bytes = new byte[Grid * Grid * 4];
-                    for (int row = 0; row < Grid; row++)
-                        new ReadOnlySpan<byte>((byte*)mapped.DataPointer + row * mapped.RowPitch, Grid * 4)
-                            .CopyTo(bytes.AsSpan(row * Grid * 4));
-                    return bytes;
-                }
-                finally { _context.Unmap(_staging!, 0); }
+                _pending = true;
+                return ReadLocked();
             }
         }
         catch (Exception)
         {
             return null;   // capture callback: never throw; a missing sample just means "not blank"
         }
+    }
+
+    public byte[]? TryReadPending()
+    {
+        try
+        {
+            lock (_gate)
+            {
+                if (_disposed || !_pending || _context is null || _staging is null) return null;
+                return ReadLocked();
+            }
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Under <c>_gate</c>, with a pending copy. Null while the GPU is still drawing.</summary>
+    private byte[]? ReadLocked()
+    {
+        var hr = _context!.Map(_staging!, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.DoNotWait, out var mapped);
+        if (hr.Code == DxgiErrorWasStillDrawing) return null;
+        hr.CheckError();
+        try
+        {
+            var bytes = new byte[Grid * Grid * 4];
+            for (int row = 0; row < Grid; row++)
+                new ReadOnlySpan<byte>((byte*)mapped.DataPointer + row * mapped.RowPitch, Grid * 4)
+                    .CopyTo(bytes.AsSpan(row * Grid * 4));
+            _pending = false;
+            return bytes;
+        }
+        finally { _context.Unmap(_staging!, 0); }
     }
 
     private void EnsureDevice(ID3D11Texture2D src)
@@ -85,7 +120,7 @@ public sealed unsafe class D3D11FrameSampler : IFrameSampler, IDisposable
         ReleaseDevice();
         _device = new ID3D11Device(dev);
         using (var mt = _device.QueryInterfaceOrNull<ID3D11Multithread>())
-            mt?.SetMultithreadProtected(true);   // the stream session copies on the same device from this thread too
+            mt?.SetMultithreadProtected(true);   // the stream session copies on the same device too; tick reads from a timer thread
         _context = _device.ImmediateContext;
         _staging = _device.CreateTexture2D(new Texture2DDescription
         {
@@ -97,9 +132,15 @@ public sealed unsafe class D3D11FrameSampler : IFrameSampler, IDisposable
 
     private void ReleaseDevice()
     {
+        _pending = false;
         _staging?.Dispose(); _staging = null;
         _context?.Dispose(); _context = null;
         _device?.Dispose(); _device = null;
+    }
+
+    public void Reset()
+    {
+        lock (_gate) ReleaseDevice();
     }
 
     public void Dispose()

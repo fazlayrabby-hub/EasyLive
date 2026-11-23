@@ -41,9 +41,14 @@ public sealed class SessionOrchestrator
     public const string AudioFailedMessage = "Your computer's sound could not be captured.";
     public const string StoppedPrefix = "Stopped — ";
 
+    public const string NoPictureMessage =
+        "Nothing to stream — the screen or window you picked isn't showing a picture. " +
+        "If it's minimized, bring it back and press Go Live again.";
+
     private static readonly TimeSpan TickInterval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan ReconnectDeadline = TimeSpan.FromSeconds(120);
+    private static readonly TimeSpan StableResetsWindow = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan ClosedHold = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan SampleInterval = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan BlankThreshold = TimeSpan.FromSeconds(3);
@@ -64,6 +69,7 @@ public sealed class SessionOrchestrator
     private SessionStatus _status = new(SessionState.Idle, "", null);
     private volatile Run? _run;
     private Task _lastTeardown = Task.CompletedTask;
+    private readonly HashSet<Task> _disposals = new();      // session disposals still running (guarded by _gate)
 
     public SessionOrchestrator(IAdapterSource a, IProbeTransport p, IFrameSource f, Func<AudioMixer> mixer,
                                Func<IStreamSession> session, KeyStore k, IFrameSampler sampler, TimeProvider clock)
@@ -81,7 +87,11 @@ public sealed class SessionOrchestrator
     /// <summary>Server URL (without key) per platform. Overridable for local testing (e.g. a MediaMTX sink).</summary>
     public Func<Platform, string> IngestUrlFor { get; init; } = Platforms.IngestUrl;
 
-    /// <summary>Raised after every status change, in order, never while an internal lock is held.</summary>
+    /// <summary>
+    /// Raised after every status change, in order, never while an internal lock is held. It is raised on background
+    /// threads (capture, audio, timer or thread-pool); handlers must not block — a UI should marshal with
+    /// Dispatcher.BeginInvoke (not Invoke) and return.
+    /// </summary>
     public event Action<SessionStatus>? StatusChanged;
 
     public SessionStatus Status { get { lock (_gate) return _status; } }
@@ -104,6 +114,7 @@ public sealed class SessionOrchestrator
             previous = _lastTeardown;
         }
         await previous.ConfigureAwait(false);   // the previous run's devices/connection are released first
+        await PendingDisposals().ConfigureAwait(false);
 
         var run = new Run(p, t) { StartTs = _clock.GetTimestamp() };
         lock (_gate)
@@ -181,7 +192,7 @@ public sealed class SessionOrchestrator
         }
         catch (StreamSessionException ex)
         {
-            return ex.Message;                               // never live yet: no reconnect loop
+            return UserMessage(ex.Message);                  // never live yet: no reconnect loop
         }
 
         lock (_gate)
@@ -208,9 +219,9 @@ public sealed class SessionOrchestrator
         lock (_gate)
         {
             if (!IsCurrent(run)) return null;                // stopped meanwhile; whoever ended it tears down
-            if (slot.Failure is { } early) return early;     // failed right after starting: not a reconnect case
+            if (slot.Failure is { } early) return UserMessage(early);   // failed right after starting: no reconnect
             run.WentLive = true;
-            run.LiveSince = _clock.GetTimestamp();
+            run.LiveSince = run.LastLiveAt = _clock.GetTimestamp();
             run.Adapt = new AdaptationController(plan.Rung, plan.StartKbps);
             run.LastDropped = 0;
             run.Tick = _clock.CreateTimer(_ => OnTick(run), null, TickInterval, TickInterval);
@@ -246,6 +257,24 @@ public sealed class SessionOrchestrator
         Task last;
         lock (_gate) last = _lastTeardown;
         await last.ConfigureAwait(false);
+        await PendingDisposals().ConfigureAwait(false);
+    }
+
+    /// <summary>Disposes a session once (every caller gets the same task) and tracks it until it has finished, so
+    /// Stop and the next Go Live wait for the native teardown of sessions dropped during reconnects.</summary>
+    private Task DisposeSlot(Slot slot)
+    {
+        var t = slot.DisposeAsync();
+        if (t.IsCompleted) return t;
+        lock (_gate) _disposals.Add(t);
+        _ = t.ContinueWith(done => { lock (_gate) _disposals.Remove(done); }, CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        return t;
+    }
+
+    private Task PendingDisposals()
+    {
+        lock (_gate) return _disposals.Count == 0 ? Task.CompletedTask : Task.WhenAll(_disposals.ToArray());
     }
 
     /// <summary>Ends <paramref name="run"/> if it is still current: status first, then teardown. Never throws.</summary>
@@ -261,7 +290,9 @@ public sealed class SessionOrchestrator
             SetStatus(new SessionStatus(state, message, null));
         }
         Publish();
-        try { await TeardownAsync(run).ConfigureAwait(false); }
+        // Never tear down on the caller's thread: it may be the UI thread or the WGC capture thread (a StatusChanged
+        // or capture handler), and capture Stop / session dispose can wait on that thread's in-flight callbacks.
+        try { await Task.Run(() => TeardownAsync(run)).ConfigureAwait(false); }
         catch (Exception ex) { Debug.WriteLine($"Teardown failed: {ex.GetType().Name}"); }
         finally { done.TrySetResult(); }
     }
@@ -301,6 +332,8 @@ public sealed class SessionOrchestrator
                 try { _frames.Stop(); } catch (Exception ex) { Debug.WriteLine($"Capture stop failed: {ex.GetType().Name}"); }
             }
         }
+        // Drop the sampler's cached staging texture / device reference so the old capture device is not kept alive.
+        try { _sampler.Reset(); } catch (Exception ex) { Debug.WriteLine($"Sampler reset failed: {ex.GetType().Name}"); }
 
         if (mixer is not null)
         {
@@ -308,14 +341,16 @@ public sealed class SessionOrchestrator
             if (run.OnNotice is not null) mixer.Notice -= run.OnNotice;
             try { mixer.Dispose(); } catch (Exception ex) { Debug.WriteLine($"Mixer dispose failed: {ex.GetType().Name}"); }
         }
-        if (session is not null) await session.DisposeAsync().ConfigureAwait(false);
-        if (pending is not null) await pending.DisposeAsync().ConfigureAwait(false);
+        if (session is not null) await DisposeSlot(session).ConfigureAwait(false);
+        if (pending is not null) await DisposeSlot(pending).ConfigureAwait(false);
+        await PendingDisposals().ConfigureAwait(false);     // sessions dropped earlier by reconnects
     }
 
     // ------------------------------------------------------------------ adaptation (once a second)
 
     private void OnTick(Run run)
     {
+        RefeedBlank(run);                                    // runs even while a reinit holds TickBusy
         if (Interlocked.CompareExchange(ref run.TickBusy, 1, 0) != 0) return;   // a reinit is still in progress
         bool release = true;
         try
@@ -411,33 +446,48 @@ public sealed class SessionOrchestrator
 
     // ------------------------------------------------------------------ session failure / reconnect
 
+    /// <summary>Failures a reconnect cannot fix. NoPicture: the capture gave no frame for 5 s (e.g. a minimized game);
+    /// a new connection would fail the same way.</summary>
     private static bool IsFatal(string message) =>
-        message == ErrorTexts.KeyRejected || message == ErrorTexts.EncoderFailed || message == ErrorTexts.ComponentsMissing;
+        message == ErrorTexts.KeyRejected || message == ErrorTexts.EncoderFailed ||
+        message == ErrorTexts.ComponentsMissing || message == ErrorTexts.NoPicture;
+
+    /// <summary>Session failure text as shown to the user.</summary>
+    private static string UserMessage(string sessionMessage) =>
+        sessionMessage == ErrorTexts.NoPicture ? NoPictureMessage : sessionMessage;
 
     private void OnSessionFailed(Run run, Slot slot, string message)
     {
         slot.Failure ??= message;                            // seen by Go Live / retry if they have not adopted it yet
-        bool fatal = false;
+        string? end = null;
         lock (_gate)
         {
             if (!IsCurrent(run) || !run.WentLive || run.Session != slot) return;   // stale, or still starting
-            if (IsFatal(message)) fatal = true;
+            if (IsFatal(message)) end = UserMessage(message);
             else
             {
-                run.Session = null;                          // media stops flowing to the dead session
-                run.Adapt = null;
-                run.FirstFailure = _clock.GetTimestamp();
-                SetStatus(new SessionStatus(SessionState.Reconnecting, ReconnectingMessage, Quality(run.Plan!.Rung)));
-                ScheduleRetry(run);
+                long now = _clock.GetTimestamp();
+                // One 120 s window covers a flapping connection: it only restarts after a stable stretch of Live.
+                if (run.FailureWindowStart is null || _clock.GetElapsedTime(run.LastLiveAt, now) >= StableResetsWindow)
+                    run.FailureWindowStart = now;
+                if (_clock.GetElapsedTime(run.FailureWindowStart.Value, now) >= ReconnectDeadline)
+                    end = ConnectionNotRestoredMessage;
+                else
+                {
+                    run.Session = null;                      // media stops flowing to the dead session
+                    run.Adapt = null;
+                    SetStatus(new SessionStatus(SessionState.Reconnecting, ReconnectingMessage, Quality(run.Plan!.Rung)));
+                    ScheduleRetry(run);
+                }
             }
         }
-        if (fatal)
+        if (end is not null)
         {
-            _ = EndRunAsync(run, SessionState.Failed, message);
+            _ = EndRunAsync(run, SessionState.Failed, end);  // teardown disposes the session
             return;
         }
         Publish();
-        _ = slot.DisposeAsync();
+        _ = DisposeSlot(slot);
     }
 
     /// <summary>Under <c>_gate</c>.</summary>
@@ -471,7 +521,7 @@ public sealed class SessionOrchestrator
             }
             if (abandoned)
             {
-                await slot.DisposeAsync().ConfigureAwait(false);
+                await DisposeSlot(slot).ConfigureAwait(false);
                 return;
             }
             await slot.Session.StartAsync(url, plan, run.Cts.Token).ConfigureAwait(false);
@@ -496,20 +546,21 @@ public sealed class SessionOrchestrator
                     run.Session = slot;
                     run.Adapt = new AdaptationController(plan.Rung, plan.StartKbps);
                     run.LastDropped = 0;
+                    run.LastLiveAt = _clock.GetTimestamp();
                     SetStatus(LiveStatus(run));
                     live = true;
                 }
-                else if (IsFatal(failure) || _clock.GetElapsedTime(run.FirstFailure) >= ReconnectDeadline)
+                else if (IsFatal(failure) || _clock.GetElapsedTime(run.FailureWindowStart!.Value) >= ReconnectDeadline)
                     giveUp = true;
                 else
                     ScheduleRetry(run);
             }
         }
 
-        if (!live && slot is not null) await slot.DisposeAsync().ConfigureAwait(false);
+        if (!live && slot is not null) await DisposeSlot(slot).ConfigureAwait(false);
         if (giveUp)
         {
-            await EndRunAsync(run, SessionState.Failed, IsFatal(failure!) ? failure! : ConnectionNotRestoredMessage)
+            await EndRunAsync(run, SessionState.Failed, IsFatal(failure!) ? UserMessage(failure!) : ConnectionNotRestoredMessage)
                 .ConfigureAwait(false);
             return;
         }
@@ -536,7 +587,7 @@ public sealed class SessionOrchestrator
         }
         catch (Exception)
         {
-            _ = EndRunAsync(run, SessionState.Failed, StoppedPrefix + (run.ClosedMessage ?? CaptureFailedMessage));
+            _ = EndRunAsync(run, SessionState.Failed, StoppedPrefix + (run.HoldMessage ?? CaptureFailedMessage));
         }
     }
 
@@ -567,21 +618,60 @@ public sealed class SessionOrchestrator
             run.HasSampled = true;
             run.LastSample = now;
             var sample = _sampler.Sample(f);
-            if (sample is null) return;
-            bool blank = run.Blank.Observe(sample, _clock.GetElapsedTime(run.StartTs, now));
-            if (blank == run.BlankShown) return;            // racy read is fine: re-checked under the lock
-            lock (_gate)
+            if (sample is null)
             {
-                if (!IsCurrent(run) || run.BlankShown == blank) return;
-                run.BlankShown = blank;
-                if (_status.State == SessionState.Live) SetStatus(LiveStatus(run));
+                run.SamplePending = true;                    // the GPU copy may still be in flight: read it on the tick
+                return;
             }
-            Publish();
+            run.SamplePending = false;
+            run.LastSampleBytes = sample;
+            ApplyBlank(run, run.Blank.Observe(sample, _clock.GetElapsedTime(run.StartTs, now)));
         }
         finally
         {
             Volatile.Write(ref run.Sampling, 0);
         }
+    }
+
+    /// <summary>Tick: WGC sends no frames while the picture does not change, so a static black screen would never be
+    /// re-observed. Re-feed the last sample (or collect a pending GPU copy) when no newer sample arrived.</summary>
+    private void RefeedBlank(Run run)
+    {
+        if (!IsCurrent(run) || Interlocked.CompareExchange(ref run.Sampling, 1, 0) != 0) return;
+        try
+        {
+            long now = _clock.GetTimestamp();
+            byte[]? bytes = null;
+            if (run.SamplePending && _sampler.TryReadPending() is { } fresh)
+            {
+                run.SamplePending = false;
+                run.LastSampleBytes = bytes = fresh;
+            }
+            else if (run.HasSampled && _clock.GetElapsedTime(run.LastSample, now) >= SampleInterval)
+                bytes = run.LastSampleBytes;
+            if (bytes is null) return;
+            ApplyBlank(run, run.Blank.Observe(bytes, _clock.GetElapsedTime(run.StartTs, now)));
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Blank re-check failed: {ex.GetType().Name}");
+        }
+        finally
+        {
+            Volatile.Write(ref run.Sampling, 0);
+        }
+    }
+
+    private void ApplyBlank(Run run, bool blank)
+    {
+        if (blank == run.BlankShown) return;                // racy read is fine: re-checked under the lock
+        lock (_gate)
+        {
+            if (!IsCurrent(run) || run.BlankShown == blank) return;
+            run.BlankShown = blank;
+            if (_status.State == SessionState.Live) SetStatus(LiveStatus(run));
+        }
+        Publish();
     }
 
     private void OnCaptureClosed(Run run, string message)
@@ -590,10 +680,15 @@ public sealed class SessionOrchestrator
         {
             if (!IsCurrent(run)) return;
             run.ClosedMessage = message;
-            if (run.Hold is null)
+            // Minimized: the user only needs to bring the window back; no countdown to stopping (ruling A).
+            if (message != CaptureStallMonitor.MinimizedMessage)
             {
-                int seq = ++run.HoldSeq;
-                run.Hold = _clock.CreateTimer(_ => OnHoldExpired(run, seq), null, ClosedHold, Timeout.InfiniteTimeSpan);
+                run.HoldMessage = message;
+                if (run.Hold is null)                        // a running countdown is not restarted
+                {
+                    int seq = ++run.HoldSeq;
+                    run.Hold = _clock.CreateTimer(_ => OnHoldExpired(run, seq), null, ClosedHold, Timeout.InfiniteTimeSpan);
+                }
             }
             if (_status.State == SessionState.Live) SetStatus(LiveStatus(run));
         }
@@ -607,6 +702,7 @@ public sealed class SessionOrchestrator
         {
             if (!IsCurrent(run) || run.ClosedMessage is null) return;
             run.ClosedMessage = null;
+            run.HoldMessage = null;
             hold = run.Hold;
             run.Hold = null;
             run.HoldSeq++;
@@ -622,7 +718,7 @@ public sealed class SessionOrchestrator
         lock (_gate)
         {
             if (!IsCurrent(run) || run.HoldSeq != seq) return;
-            message = run.ClosedMessage;
+            message = run.HoldMessage;
         }
         if (message is not null) _ = EndRunAsync(run, SessionState.Failed, StoppedPrefix + message);
     }
@@ -712,19 +808,23 @@ public sealed class SessionOrchestrator
         public AdaptationController? Adapt;
         public int LastDropped;
         public long LiveSince;
-        public long FirstFailure;
+        public long LastLiveAt;                              // last time the run (re)entered Live
+        public long? FailureWindowStart;                     // start of the current 120 s reconnect window
         public bool WentLive;
         public ITimer? Tick, Hold, Retry;
         public int HoldSeq;
 
         public string BaseMessage = LiveMessage;
         public volatile string? ClosedMessage;               // read lock-free on the frame path
+        public string? HoldMessage;                          // the Closed message the 10 s countdown stops with
         public bool BlankShown;
 
-        // frame path only (guarded by Sampling)
+        // frame path and tick (guarded by Sampling)
         public int Sampling;
         public bool HasSampled;
         public long LastSample;
+        public bool SamplePending;
+        public byte[]? LastSampleBytes;
         public readonly BlankFrameDetector Blank = new(BlankThreshold);
 
         public int TickBusy;                                 // Interlocked
@@ -741,7 +841,8 @@ public sealed class SessionOrchestrator
     /// <summary>A stream session plus its Failed subscription.</summary>
     private sealed class Slot
     {
-        private int _disposed;
+        private readonly object _lock = new();
+        private Task? _disposeTask;
 
         public Slot(IStreamSession session) => Session = session;
 
@@ -749,9 +850,14 @@ public sealed class SessionOrchestrator
         public Action<string>? OnFailed;
         public volatile string? Failure;
 
-        public async Task DisposeAsync()
+        /// <summary>Disposes once; every caller gets the same task, which completes when the session is gone.</summary>
+        public Task DisposeAsync()
         {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            lock (_lock) return _disposeTask ??= Task.Run(DisposeCoreAsync);   // not on the caller's thread
+        }
+
+        private async Task DisposeCoreAsync()
+        {
             if (OnFailed is not null) Session.Failed -= OnFailed;
             try { await Session.DisposeAsync().ConfigureAwait(false); }
             catch (Exception ex) { Debug.WriteLine($"Session dispose failed: {ex.GetType().Name}"); }

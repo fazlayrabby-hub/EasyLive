@@ -30,6 +30,19 @@ public class D3D11FrameSamplerTests
         }
     }
 
+    /// <summary>Sample never waits for the GPU: the copy may only be readable later via TryReadPending.</summary>
+    private static byte[] SampleAndCollect(D3D11FrameSampler sampler, ID3D11Texture2D tex, int w, int h)
+    {
+        var bytes = sampler.Sample(new CaptureFrame(tex.NativePointer, w, h, 0));
+        for (int i = 0; bytes is null && i < 200; i++)
+        {
+            Thread.Sleep(5);
+            bytes = sampler.TryReadPending();
+        }
+        Assert.NotNull(bytes);
+        return bytes!;
+    }
+
     [Fact]
     public void Samples_an_8x8_grid_of_bgra_pixels()
     {
@@ -38,10 +51,9 @@ public class D3D11FrameSamplerTests
         using var tex = CreateTexture(device, 640, 360, (x, _) => x < 320 ? 0xFF000000u : 0xFFFFFFFFu);
         using var sampler = new D3D11FrameSampler();
 
-        var bytes = sampler.Sample(new CaptureFrame(tex.NativePointer, 640, 360, 0));
+        var bytes = SampleAndCollect(sampler, tex, 640, 360);
 
-        Assert.NotNull(bytes);
-        Assert.Equal(8 * 8 * 4, bytes!.Length);
+        Assert.Equal(8 * 8 * 4, bytes.Length);
         for (int gy = 0; gy < 8; gy++)
             for (int gx = 0; gx < 8; gx++)
             {
@@ -51,12 +63,17 @@ public class D3D11FrameSamplerTests
                 Assert.Equal(expected, bytes[i + 1]);
                 Assert.Equal(expected, bytes[i + 2]);
             }
+        Assert.Null(sampler.TryReadPending());          // already collected
 
-        // second call reuses the cached staging texture and sees new content
+        // a second call reuses the cached staging texture and sees new content
         using var black = CreateTexture(device, 640, 360, (_, _) => 0xFF000000u);
-        var again = sampler.Sample(new CaptureFrame(black.NativePointer, 640, 360, 0));
-        Assert.NotNull(again);
+        var again = SampleAndCollect(sampler, black, 640, 360);
         Assert.True(new BlankFrameDetector(TimeSpan.Zero).Observe(again, TimeSpan.Zero));
+
+        // Reset releases the cache; sampling afterwards recreates it
+        sampler.Reset();
+        Assert.Null(sampler.TryReadPending());
+        Assert.Equal(256, SampleAndCollect(sampler, tex, 640, 360).Length);
     }
 
     [Fact]
@@ -64,6 +81,7 @@ public class D3D11FrameSamplerTests
     {
         var sampler = new D3D11FrameSampler();
         Assert.Null(sampler.Sample(new CaptureFrame(0, 640, 360, 0)));
+        Assert.Null(sampler.TryReadPending());
         using var device = CreateDevice();
         using var tex = CreateTexture(device, 64, 64, (_, _) => 0xFF808080u);
         sampler.Dispose();

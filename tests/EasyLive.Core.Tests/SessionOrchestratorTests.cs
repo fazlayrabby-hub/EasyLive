@@ -78,14 +78,29 @@ public sealed class SessionOrchestratorTests : IDisposable
                 throw ex;
             }
             Started = true;
+            if (FailAfterStart is { } m) FailedHandlers?.Invoke(m);   // fails right after StartAsync succeeded
         }
+
+        public string? FailAfterStart { get; set; }
+        public TaskCompletionSource? ReinitGate { get; set; }
+        public int DisposeCalls;
+        public TaskCompletionSource? DisposeGate { get; set; }
 
         public void PushVideo(CaptureFrame f) => Interlocked.Increment(ref VideoPushes);
         public void PushAudio(AudioChunk c) => Interlocked.Increment(ref AudioPushes);
         public void SetBitrate(int kbps) { lock (Bitrates) Bitrates.Add(kbps); }
-        public Task ReinitAsync(QualityRung lower) { lock (Reinits) Reinits.Add(lower); return Task.CompletedTask; }
+        public Task ReinitAsync(QualityRung lower)
+        {
+            lock (Reinits) Reinits.Add(lower);
+            return ReinitGate?.Task ?? Task.CompletedTask;
+        }
         public void Fail(string message) => FailedHandlers?.Invoke(message);
-        public ValueTask DisposeAsync() { Disposed = true; return ValueTask.CompletedTask; }
+        public async ValueTask DisposeAsync()
+        {
+            Interlocked.Increment(ref DisposeCalls);
+            if (DisposeGate is { } g) await g.Task;
+            Disposed = true;
+        }
     }
 
     private sealed class RecordingFrameSource : IFrameSource
@@ -96,7 +111,12 @@ public sealed class SessionOrchestratorTests : IDisposable
         public bool Running { get; private set; }
         public int Starts, Stops;
         public bool HasSubscribers => FrameArrived is not null || Closed is not null;
-        public void Start(CaptureTarget target) { Target = target; Running = true; Starts++; }
+        public bool StartThrows { get; set; }
+        public void Start(CaptureTarget target)
+        {
+            if (StartThrows) throw new InvalidOperationException("window gone");
+            Target = target; Running = true; Starts++;
+        }
         public void Stop() { Running = false; Stops++; }
         public void Raise() => FrameArrived?.Invoke(new CaptureFrame(1, 1920, 1080, 0));
         public void RaiseClosed(string reason) => Closed?.Invoke(reason);
@@ -107,7 +127,11 @@ public sealed class SessionOrchestratorTests : IDisposable
     {
         public byte[]? Next { get; set; } = Bright;
         public int Calls;
+        public int Resets;
         public byte[]? Sample(CaptureFrame f) { Calls++; return Next; }
+        public void Reset() => Interlocked.Increment(ref Resets);
+        public byte[]? Pending { get; set; }
+        public byte[]? TryReadPending() => Pending;
         public static byte[] Black => new byte[64 * 4];
         public static byte[] Bright => Enumerable.Repeat((byte)200, 64 * 4).ToArray();
     }
@@ -615,6 +639,258 @@ public sealed class SessionOrchestratorTests : IDisposable
         Advance(30);
         Assert.Equal(1, SessionCount);
         Assert.Equal(SessionState.Stopped, _orch.Status.State);
+    }
+
+    // ---------- fix round 1 ----------
+
+    [Fact]
+    public async Task Minimized_message_shows_without_hold_and_a_frame_clears_it()
+    {
+        await GoLiveAsync();
+        _frames.RaiseClosed(CaptureStallMonitor.MinimizedMessage);
+
+        Assert.Equal(SessionState.Live, _orch.Status.State);
+        Assert.Equal(CaptureStallMonitor.MinimizedMessage, _orch.Status.Message);
+        Advance(30);
+        Assert.Equal(SessionState.Live, _orch.Status.State);
+        Assert.Equal(CaptureStallMonitor.MinimizedMessage, _orch.Status.Message);
+
+        _frames.Raise();
+        Assert.Equal(SessionOrchestrator.LiveMessage, _orch.Status.Message);
+    }
+
+    [Fact]
+    public async Task Closed_after_minimized_still_stops_after_10_s()
+    {
+        await GoLiveAsync();
+        _frames.RaiseClosed(CaptureStallMonitor.MinimizedMessage);
+        Advance(3);
+        _frames.RaiseClosed("The window you were sharing was closed.");
+        Advance(10);
+        WaitFor(() => _orch.Status.State == SessionState.Failed, "failed");
+        Assert.Equal(SessionOrchestrator.StoppedPrefix + "The window you were sharing was closed.", _orch.Status.Message);
+    }
+
+    [Fact]
+    public async Task No_picture_is_not_retried_and_shows_a_plain_capture_message()
+    {
+        await GoLiveAsync();
+        LastSession.Fail(ErrorTexts.NoPicture);
+
+        WaitFor(() => _orch.Status.State == SessionState.Failed, "failed");
+        Assert.Equal(SessionOrchestrator.NoPictureMessage, _orch.Status.Message);
+        Advance(30);
+        Assert.Equal(1, SessionCount);
+    }
+
+    [Fact]
+    public async Task Reconnect_deadline_is_not_reset_by_brief_recoveries()
+    {
+        await GoLiveAsync();
+        int t = 0;
+        LastSession.Fail(ErrorTexts.ConnectionLost);
+        while (_orch.Status.State != SessionState.Failed)
+        {
+            Assert.True(t < 200, "never gave up");
+            Advance(5); t += 5;
+            WaitFor(() => _orch.Status.State == SessionState.Live, "live again");
+            Advance(2); t += 2;
+            LastSession.Fail(ErrorTexts.ConnectionLost);
+        }
+        Assert.InRange(t, 120, 127);
+        Assert.Equal(SessionOrchestrator.ConnectionNotRestoredMessage, _orch.Status.Message);
+    }
+
+    [Fact]
+    public async Task Failure_after_60_s_stable_gets_a_fresh_reconnect_window()
+    {
+        await GoLiveAsync();
+        LastSession.Fail(ErrorTexts.ConnectionLost);   // t = 0
+        Advance(5);
+        WaitFor(() => _orch.Status.State == SessionState.Live, "live again");
+        Advance(100);                                  // stable for 100 s
+        for (int i = 0; i < 40; i++)
+            _sessionSetups.Enqueue(s => s.StartThrows = new StreamSessionException(ErrorTexts.CouldNotConnect));
+        LastSession.Fail(ErrorTexts.ConnectionLost);   // t = 105: new window
+
+        Advance(115);
+        Assert.Equal(SessionState.Reconnecting, _orch.Status.State);
+        Advance(6);
+        WaitFor(() => _orch.Status.State == SessionState.Failed, "failed");
+    }
+
+    [Fact]
+    public async Task Static_black_picture_warns_from_the_tick_without_new_frames()
+    {
+        await GoLiveAsync();
+        _sampler.Next = FakeSampler.Black;
+        _frames.Raise();                               // WGC: one frame, then nothing while the picture is unchanged
+
+        Advance(2);
+        Assert.Equal(SessionOrchestrator.LiveMessage, _orch.Status.Message);
+        Advance(2);
+        Assert.Equal(SessionState.Live, _orch.Status.State);
+        Assert.Equal(SessionOrchestrator.BlankWarning, _orch.Status.Message);
+
+        _sampler.Next = FakeSampler.Bright;
+        _frames.Raise();
+        Assert.Equal(SessionOrchestrator.LiveMessage, _orch.Status.Message);
+        Advance(5);
+        Assert.Equal(SessionOrchestrator.LiveMessage, _orch.Status.Message);
+    }
+
+    [Fact]
+    public async Task Pending_gpu_sample_is_collected_on_the_tick()
+    {
+        await GoLiveAsync();
+        _sampler.Next = null;                          // copy not readable yet inside the callback
+        _sampler.Pending = FakeSampler.Black;
+        _frames.Raise();
+
+        Advance(5);
+        Assert.Equal(SessionOrchestrator.BlankWarning, _orch.Status.Message);
+        Assert.Equal(SessionState.Live, _orch.Status.State);
+    }
+
+    [Fact]
+    public async Task Capture_restart_failing_after_reconnect_fails_with_stopped_message()
+    {
+        await GoLiveAsync();
+        _frames.StartThrows = true;
+        LastSession.Fail(ErrorTexts.ConnectionLost);
+        Advance(5);
+
+        WaitFor(() => _orch.Status.State == SessionState.Failed, "failed");
+        Assert.Equal(SessionOrchestrator.StoppedPrefix + SessionOrchestrator.CaptureFailedMessage, _orch.Status.Message);
+        WaitFor(() => LastSession.Disposed, "new session disposed");
+    }
+
+    [Fact]
+    public async Task Session_failing_between_start_and_live_fails_without_reconnect()
+    {
+        _keys.Save(Platform.YouTube, Key);
+        _sessionSetups.Enqueue(s => s.FailAfterStart = ErrorTexts.ConnectionLost);
+
+        await _orch.GoLiveAsync(Platform.YouTube, Monitor, CancellationToken.None);
+
+        Assert.Equal(SessionState.Failed, _orch.Status.State);
+        Assert.Equal(ErrorTexts.ConnectionLost, _orch.Status.Message);
+        Advance(30);
+        Assert.Equal(1, SessionCount);
+        Assert.False(_frames.Running);
+    }
+
+    [Fact]
+    public async Task Failed_during_inflight_reinit_reconnects_at_the_old_rung_and_ticks_resume()
+    {
+        await GoLiveAsync();
+        var first = LastSession;
+        var gate = new TaskCompletionSource();
+        first.ReinitGate = gate;
+        first.Health = new StreamHealth(2000, 0, 0, 1800);
+        Advance(12);
+        Assert.Single(first.Reinits);
+
+        first.Fail(ErrorTexts.ConnectionLost);
+        Assert.Equal(SessionState.Reconnecting, _orch.Status.State);
+        gate.SetResult();                              // stale completion
+        Assert.Equal("720p · 30 fps", _orch.Status.QualityText);
+
+        Advance(5);
+        WaitFor(() => _orch.Status.State == SessionState.Live, "live again");
+        var second = LastSession;
+        Assert.Equal("720p30", second.Plan!.Rung.Name);
+        second.Health = new StreamHealth(2000, 0, 0, 1500);   // already at the 720p30 floor (1500)
+        Advance(11);
+        Assert.Equal("480p30", Assert.Single(second.Reinits).Name);   // ticks were not left blocked by the stale reinit
+    }
+
+    [Fact]
+    public async Task Stop_during_inflight_reinit_stays_stopped()
+    {
+        await GoLiveAsync();
+        var s = LastSession;
+        var gate = new TaskCompletionSource();
+        s.ReinitGate = gate;
+        s.Health = new StreamHealth(2000, 0, 0, 1800);
+        Advance(12);
+        Assert.Single(s.Reinits);
+
+        await _orch.StopAsync();
+        gate.SetResult();
+
+        Assert.Equal(SessionState.Stopped, _orch.Status.State);
+        Assert.Null(_orch.Status.QualityText);
+    }
+
+    [Fact]
+    public async Task Reinit_from_1080p60_goes_to_1080p30_on_hardware()
+    {
+        _probe.UploadMbps = 8;                         // budget 4800 -> 1080p60 on QuickSync
+        await GoLiveAsync();
+        Assert.Equal("1080p · 60 fps", _orch.Status.QualityText);
+        var s = LastSession;
+        s.Health = new StreamHealth(2000, 0, 0, 4800);
+
+        Advance(12);
+
+        Assert.Equal("1080p30", Assert.Single(s.Reinits).Name);
+        Assert.Equal("1080p · 30 fps", _orch.Status.QualityText);
+    }
+
+    [Fact]
+    public async Task Reinit_with_openh264_goes_from_720p30_to_480p30()
+    {
+        _adapters.Names = Array.Empty<string>();       // no GPU -> OpenH264
+        await GoLiveAsync();
+        var s = LastSession;
+        Assert.Equal(EncoderKind.OpenH264, s.Plan!.Encoder);
+        Assert.Equal("720p30", s.Plan.Rung.Name);
+        s.Health = new StreamHealth(2000, 0, 0, 1800);
+
+        Advance(12);
+
+        Assert.Equal("480p30", Assert.Single(s.Reinits).Name);
+        Assert.Equal("480p · 30 fps", _orch.Status.QualityText);
+    }
+
+    [Fact]
+    public async Task Failed_from_thread_pool_while_frames_flow_and_stop_races()
+    {
+        await GoLiveAsync();
+        var first = LastSession;
+        using var cts = new CancellationTokenSource();
+        var frames = Task.Run(() => { while (!cts.IsCancellationRequested) _frames.Raise(); });
+
+        await Task.Run(() => first.Fail(ErrorTexts.ConnectionLost));
+        WaitFor(() => _orch.Status.State == SessionState.Reconnecting, "reconnecting");
+        await Task.WhenAll(Task.Run(() => first.FailStale(ErrorTexts.ConnectionLost)), Task.Run(_orch.StopAsync));
+        cts.Cancel();
+        await frames;
+
+        Assert.Equal(SessionState.Stopped, _orch.Status.State);
+        Assert.False(_frames.HasSubscribers);
+        Assert.True(first.Disposed);
+    }
+
+    [Fact]
+    public async Task Stop_waits_for_sessions_dropped_while_reconnecting_and_disposes_once()
+    {
+        await GoLiveAsync();
+        var first = LastSession;
+        var gate = new TaskCompletionSource();
+        first.DisposeGate = gate;
+        first.Fail(ErrorTexts.ConnectionLost);
+
+        var stop = _orch.StopAsync();
+        await Task.Delay(100);
+        Assert.False(stop.IsCompleted);
+        gate.SetResult();
+        await stop.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(first.Disposed);
+        Assert.Equal(1, first.DisposeCalls);
+        Assert.True(_sampler.Resets >= 1);
     }
 
     [Fact]
