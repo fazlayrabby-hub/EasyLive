@@ -98,7 +98,7 @@ public class SendQueueTests
     }
 
     [Fact]
-    public void Complete_wakes_a_waiting_consumer_and_drain_returns_the_rest()
+    public async Task Complete_wakes_a_waiting_consumer_and_drain_returns_the_rest()
     {
         var q = NewQueue();
         q.Enqueue("K0", true, true, 0);
@@ -107,10 +107,9 @@ public class SendQueueTests
         Assert.Equal(new[] { "K0", "A0" }, rest);
 
         var waiter = Task.Run(() => q.TryDequeue(out _, 5000));
-        Thread.Sleep(50);
+        await Task.Delay(50);
         q.Complete();
-        Assert.True(waiter.Wait(1000));
-        Assert.False(waiter.Result);
+        Assert.False(await waiter.WaitAsync(TimeSpan.FromSeconds(1)));
         Assert.Equal(0, q.QueueMs);
     }
 }
