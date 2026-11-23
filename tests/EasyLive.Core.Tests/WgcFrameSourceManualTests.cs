@@ -40,6 +40,7 @@ public class WgcFrameSourceManualTests
             }
         });
         src.Start(primary);
+        _out.WriteLine($"border: {src.BorderStatus}");
         await Task.Delay(3000);
         src.Stop();
         cts.Cancel(); await wiggle;

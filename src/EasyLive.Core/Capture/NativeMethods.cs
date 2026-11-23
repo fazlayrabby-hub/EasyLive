@@ -63,9 +63,3 @@ internal interface IDirect3DDxgiInterfaceAccess
     nint GetInterface(in Guid iid);
 }
 
-/// <summary>IGraphicsCaptureSession3 (Windows 11 22H2+): the SDK contract we compile against predates it.</summary>
-[ComImport, Guid("F2CDD966-22AE-5EA1-9596-3A289344C3BE"), InterfaceType(ComInterfaceType.InterfaceIsIInspectable)]
-internal interface IGraphicsCaptureSession3
-{
-    void put_IsBorderRequired([MarshalAs(UnmanagedType.U1)] bool value);
-}
