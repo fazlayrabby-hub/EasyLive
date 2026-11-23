@@ -19,3 +19,27 @@ Manual `HardwareDetector.Detect(new DxgiAdapterSource())` results (smoke test `M
   - Encoder options: `h264_amf: all options accepted` on every open (ffmpeg.log). The `Encoder_accepts_every_option_we_set` test has no `h264_amf` case.
   - ffprobe reports AMF `avg_frame_rate=1000/33` (packet timing is 30.00 fps) — check against YouTube/Facebook in Task 12.
 - RTMPS to a real platform: not tested.
+
+## Task 12 validation checklist (manual, to be filled in by a person)
+
+Nothing below has been run yet. Leave a cell empty until it has actually been measured; do not copy numbers from the local-MediaMTX tests above.
+Use the packaged app (`artifacts\EasyLive-<version>\EasyLive.exe`, built by `build\publish.ps1`) and a YouTube *unlisted* test broadcast / a Facebook test live video.
+Pass criteria: no visible stutter, dropped frames < 0.5 %.
+
+| # | Step | PC / GPU / encoder used | Date | Duration | Rung picked (auto) | Frames dropped (%) | Game/video FPS impact | Stutter seen? | Pass / Fail | Notes |
+|---|------|-------------------------|------|----------|--------------------|--------------------|-----------------------|---------------|-------------|-------|
+| 1 | 10-min YouTube unlisted run, Intel PC (Iris Xe, QuickSync) | | | | | | | | | |
+| 2 | 10-min YouTube unlisted run, AMD PC (RX 6700 XT, AMF) | | | | | | | | | |
+| 3 | 3 Mbps upload throttle with `clumsy` mid-stream (YouTube) | | | | | | | | | |
+| 4 | 10-min Facebook test live video | | | | | | | | | |
+| 5 | NVENC (NVIDIA PC) | **untested** (no test machine) | | | | | | | | |
+
+Step 3 details to record (expected: bitrate steps down within ~3 s, no freeze, recovers after ~20 s):
+
+| Throttle started (time) | Time bitrate first stepped down (s after start) | Lowest bitrate (kbps) | Freeze seen? | Time to recover after throttle removed (s) | Final bitrate (kbps) | Pass / Fail |
+|---|---|---|---|---|---|---|
+| | | | | | | |
+
+Other things to note while testing: YouTube/Facebook stream-health page (keyframe interval 2 s, no warnings), the AMF `avg_frame_rate=1000/33` ffprobe oddity (see above), and that the software fallback (OpenH264) was *not* the encoder in use unless that is what is being tested.
+
+Packaging checks (see `docs/superpowers/sdd-state/task-12-report.md`): the published `EasyLive.exe` was smoke-launched on the dev PC (which does have a system .NET installed, with `DOTNET_ROOT` unset) and FFmpeg was resolved from `ffmpeg\`. Not yet checked on a clean PC with no .NET installed: please unzip the package there, start `EasyLive.exe` and note the result here: ________

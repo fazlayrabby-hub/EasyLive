@@ -1,0 +1,47 @@
+OpenH264 (Cisco) in EasyLive - what applies and what does not
+==============================================================
+
+OpenH264 Video Codec - Copyright (c) 2013, Cisco Systems. Source: https://github.com/cisco/openh264
+Licence of the source code: BSD 2-Clause (see OpenH264-BSD-2-Clause.txt).
+
+How it is used
+--------------
+EasyLive uses OpenH264 only as the software (CPU) fallback H.264 encoder, when no hardware encoder
+(Intel Quick Sync, AMD AMF, NVIDIA NVENC) is available. It is NOT a separate openh264.dll: the FFmpeg
+build that EasyLive ships (BtbN, configured with --enable-libopenh264) has OpenH264 compiled into
+avcodec-62.dll, and FFmpeg exposes it as the encoder "libopenh264".
+
+IMPORTANT - Cisco's patent licence does not cover this copy
+-----------------------------------------------------------
+Cisco's "binary licence" (reference copy: OpenH264-Cisco-BINARY_LICENSE-reference.txt) pays the MPEG LA
+AVC/H.264 patent royalties for the binary that CISCO itself builds and hosts, but only if, among other
+conditions, (1) that Cisco-provided binary is downloaded separately to the end user's device and is not
+integrated into or combined with third-party software before download, (2) the end user can enable,
+disable or re-enable its use, and (3) the sentence below is displayed where the user controls it:
+
+    "OpenH264 Video Codec provided by Cisco Systems, Inc."
+
+The OpenH264 code in EasyLive is built from source by a third party (BtbN) and linked statically into
+FFmpeg's avcodec-62.dll, which is distributed inside the EasyLive package. It is not the Cisco-provided
+binary, so Cisco's patent licence/royalty coverage does NOT extend to it. What you do get for this copy
+is the BSD 2-Clause copyright licence, which grants no patent licence. Whether any H.264 patent licence
+is needed for free, non-commercial distribution of this software is a legal question that EasyLive's
+author has not settled; this is not legal advice.
+
+The BSD 2-Clause copyright notice and disclaimer are reproduced in OpenH264-BSD-2-Clause.txt as BSD
+condition 2 requires for binary redistribution.
+
+Options (for the distributor)
+-----------------------------
+ a) Accept the residual risk, as many free tools that bundle FFmpeg do (hardware encoders are used on
+    almost all PCs; OpenH264 is only the fallback), and keep this notice.
+ b) Use Cisco's binary properly: build FFmpeg so that libopenh264 loads Cisco's DLL at run time, do not
+    ship that DLL in the package, make EasyLive download it from Cisco's server on first use, let the user
+    control it, and show the sentence above. This needs a custom FFmpeg build and an app change.
+ c) Remove libopenh264 use and fall back to Windows' own H.264 encoder (FFmpeg "h264_mf", Media Foundation),
+    which the code already supports in VideoEncoder.CodecNameFor. The encoder is part of Windows, so
+    patent licensing for it is a matter between Microsoft and the Windows licensee (not verified here).
+ d) Obtain an AVC/H.264 licence of your own (MPEG LA / Via LA), or seek legal advice.
+
+The same kind of consideration applies to the AAC audio encoder ("aac", part of FFmpeg) and to the
+hardware encoders (which run inside the GPU vendor's driver, not inside EasyLive).

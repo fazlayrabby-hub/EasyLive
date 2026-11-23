@@ -1,0 +1,78 @@
+EasyLive - third-party notices
+==============================
+
+EasyLive is free software given away at no charge. It contains or loads the components below. The full
+licence texts are in the LICENSES folder next to this file.
+
+FFmpeg libraries (shipped as DLLs in the "ffmpeg" folder)
+---------------------------------------------------------
+  Components : avcodec-62, avformat-62, avutil-60, swscale-9, swresample-6   (FFmpeg 8.1, "n8.1.3" branch build)
+  Licence    : GNU Lesser General Public License v3 (LGPL-3.0)   -> LICENSES\FFmpeg-LGPL-3.0.txt
+               The LGPL-3.0 text incorporates the GNU GPL v3 by reference: https://www.gnu.org/licenses/gpl-3.0.txt
+  Source/URL : https://ffmpeg.org  -  prebuilt LGPL shared build: https://github.com/BtbN/FFmpeg-Builds
+  Notes      : Built without --enable-gpl and without x264/x265. The DLLs are separate files that you may
+               replace with your own build of the same FFmpeg version (see LICENSES\FFmpeg-SOURCE-AND-RELINK.txt
+               for source code, build and replacement instructions). The build also links third-party libraries
+               (e.g. dav1d, libaom, libvpx, opus, vorbis, lame, zimg, ...) under their own permissive or LGPL
+               licences; see the "configuration:" line of the FFmpeg build and the BtbN repository.
+
+OpenH264 (compiled into avcodec-62.dll)
+---------------------------------------
+  Version    : as linked by the BtbN FFmpeg 8.1 build (version not recorded in the binary)
+  Licence    : BSD 2-Clause, Copyright (c) 2013 Cisco Systems  -> LICENSES\OpenH264-BSD-2-Clause.txt
+  URL        : https://github.com/cisco/openh264
+  Notes      : Software H.264 fallback encoder only. This is NOT the Cisco-provided binary, so Cisco's
+               H.264 patent licence does not cover it. Read LICENSES\OpenH264-NOTICE.txt.
+               "OpenH264 Video Codec provided by Cisco Systems, Inc." applies only to Cisco's own binary and is
+               therefore not claimed for this copy.
+
+FFmpeg.AutoGen 8.1.0 (FFmpeg.AutoGen.dll)
+-----------------------------------------
+  Licence    : MIT, Copyright (c) 2025 Ruslan Balanukhin (Rationale One)   -> LICENSES\FFmpeg.AutoGen-MIT.txt
+               (the NuGet package declares the file LICENSE.txt; it is MIT, not LGPL)
+  URL        : https://github.com/Ruslan-B/FFmpeg.AutoGen
+  Notes      : C# bindings that load the FFmpeg DLLs at run time.
+
+NAudio 2.2.1 (NAudio*.dll: NAudio, NAudio.Core, NAudio.Wasapi, NAudio.WinMM, NAudio.Asio, NAudio.Midi, NAudio.WinForms)
+-----------------------------------------------------------------------------------------------------------------
+  Licence    : MIT, Copyright 2020 Mark Heath   -> LICENSES\NAudio-MIT.txt
+  URL        : https://github.com/naudio/NAudio
+
+Vortice.Direct3D11 / Vortice.DXGI / Vortice.DirectX 3.8.3
+---------------------------------------------------------
+  Licence    : MIT, Copyright (c) Amer Koleci and contributors   -> LICENSES\Vortice.Windows-MIT.txt
+  URL        : https://github.com/amerkoleci/Vortice.Windows
+  Notes      : Licence text taken from the project repository (the NuGet packages declare "MIT" but contain no file).
+
+Vortice.Mathematics 2.1.0
+-------------------------
+  Licence    : MIT, Copyright (c) Amer Koleci and contributors   -> LICENSES\Vortice.Mathematics-MIT.txt
+  URL        : https://github.com/amerkoleci/Vortice.Mathematics
+
+SharpGen.Runtime and SharpGen.Runtime.COM 2.4.2-beta
+----------------------------------------------------
+  Licence    : MIT, Copyright (c) 2010-2017 Alexandre Mutel, 2017 Jeremy Koritzinsky   -> LICENSES\SharpGenTools-MIT.txt
+  URL        : https://github.com/SharpGenTools/SharpGenTools
+  Notes      : Licence text taken from the project repository (the NuGet packages declare "MIT" but contain no file).
+
+System.Security.Cryptography.ProtectedData 8.0.0 and the .NET 8 runtime (self-contained, .NET + WPF)
+-----------------------------------------------------------------------------------------------------
+  Licence    : MIT, Copyright (c) .NET Foundation and Contributors   -> LICENSES\dotnet-runtime-MIT.txt
+               Third-party notices of the runtime: LICENSES\dotnet-runtime-THIRD-PARTY-NOTICES.txt
+  URL        : https://github.com/dotnet/runtime , https://github.com/dotnet/wpf
+
+Microsoft.Windows.SDK.NET.dll and WinRT.Runtime.dll (Windows SDK .NET projection, used for screen capture)
+----------------------------------------------------------------------------------------------------------
+  Package    : Microsoft.Windows.SDK.NET.Ref 10.0.19041.56 (C#/WinRT projection)
+  Licence    : declared only by URL (https://aka.ms/WinSDKLicenseURL); no licence text is contained in the
+               package. Copyright (c) Microsoft Corporation. All rights reserved. The C#/WinRT runtime itself
+               is MIT-licensed (https://github.com/microsoft/CsWinRT).
+  Notes      : Not verified against a text; see the packaging report.
+
+Not shipped, for information
+----------------------------
+  MediaMTX (MIT) is used only by the developer tests and is not part of this package.
+  GPU encoders (Intel Quick Sync, AMD AMF, NVIDIA NVENC) run inside the GPU vendors' drivers installed on
+  your PC; no vendor code is distributed with EasyLive.
+
+EasyLive itself is not yet under a published licence of its own.

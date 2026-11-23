@@ -3,3 +3,4 @@ bin/
 obj/
 tools/ffmpeg/
 tools/mediamtx/
+artifacts/
