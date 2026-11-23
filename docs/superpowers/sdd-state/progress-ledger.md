@@ -71,3 +71,5 @@ Task 10: fix round 1/5 (all addressed, 0 open; commits ce77664..c1d7106)
 Task 10: complete (commits 141d1aa..c1d7106 area, review clean after 1 fix round; 210 passed/5 skipped)
 Task 10: minor (deferred): sampler Reset may race an in-flight WGC callback (re-creates staging texture after Reset); RefeedBlank can make a frame skip sampling; SamplePending set on permanent sampler failure; Minimized message replacing ClosedMessage during hold countdown shows mismatched text; no test for NoPicture on a reconnect retry session.
 Next: Task 11 (WPF app).
+Task 11: implemented bcf23f9 -> review needs fixes -> fix round 1/5 (1 Important + 3 Minor addressed; commits bcf23f9..a9d1a4d). UI restyle d5780de (Neon theme). 234 passed/5 skipped. Scoped re-review of the fix round NOT yet done. Not verified: interactive run (plan Step 5), live-state visuals, 125-150% DPI, empty-looking share dropdown in idle screenshot (check it lists monitors).
+Next: Task 12 (validation/packaging/licences).
