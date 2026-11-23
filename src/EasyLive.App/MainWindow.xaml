@@ -9,6 +9,74 @@
             BorderBrush="#33FFFFFF" BorderThickness="1">
         <Border.Effect><DropShadowEffect Color="#8B5CF6" BlurRadius="28" ShadowDepth="0" Opacity="0.35"/></Border.Effect>
         <Grid>
+        <!-- Alert backgrounds: crimson while live, amber while reconnecting (fade 400 ms) -->
+        <Border IsHitTestVisible="False" CornerRadius="21" Opacity="0"
+                BorderBrush="#FF5C74" BorderThickness="3">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop Color="#3B0A14" Offset="0"/>
+                    <GradientStop Color="#8B1020" Offset="1"/>
+                </LinearGradientBrush>
+            </Border.Background>
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding State}" Value="Live">
+                            <DataTrigger.EnterActions>
+                                <BeginStoryboard x:Name="liveIn">
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0" To="1" Duration="0:0:0.4"/>
+                                        <DoubleAnimation Storyboard.TargetProperty="BorderBrush.Opacity" From="1" To="0.25"
+                                                         Duration="0:0:0.9" RepeatBehavior="Forever" AutoReverse="True"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </DataTrigger.EnterActions>
+                            <DataTrigger.ExitActions>
+                                <StopStoryboard BeginStoryboardName="liveIn"/>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0" Duration="0:0:0.4"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </DataTrigger.ExitActions>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+        </Border>
+        <Border IsHitTestVisible="False" CornerRadius="21" Opacity="0"
+                BorderBrush="#FBBF24" BorderThickness="1.5">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop Color="#2E1F06" Offset="0"/>
+                    <GradientStop Color="#6B4A0C" Offset="1"/>
+                </LinearGradientBrush>
+            </Border.Background>
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding State}" Value="Reconnecting">
+                            <DataTrigger.EnterActions>
+                                <BeginStoryboard x:Name="recIn">
+                                    <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                                        <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0.45" To="0.9" Duration="0:0:0.9"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </DataTrigger.EnterActions>
+                            <DataTrigger.ExitActions>
+                                <StopStoryboard BeginStoryboardName="recIn"/>
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0.6" To="0" Duration="0:0:0.4"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </DataTrigger.ExitActions>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+        </Border>
+        <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
@@ -24,6 +92,51 @@
                         </TextBlock.Foreground>
                     </TextBlock>
                 </StackPanel>
+                <Border HorizontalAlignment="Center" VerticalAlignment="Center" CornerRadius="12" Padding="10,3"
+                        BorderThickness="1" AutomationProperties.Name="On air indicator">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Setter Property="Background" Value="#CCF43F5E"/>
+                            <Setter Property="BorderBrush" Value="#FFA3B1"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding State}" Value="Live">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding State}" Value="Reconnecting">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                    <Setter Property="Background" Value="#CCB7791F"/>
+                                    <Setter Property="BorderBrush" Value="#FDE68A"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="8" Height="8" Fill="White" Margin="0,0,7,0" VerticalAlignment="Center">
+                            <Ellipse.Triggers>
+                                <EventTrigger RoutedEvent="Loaded">
+                                    <BeginStoryboard>
+                                        <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                                            <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0.25" Duration="0:0:0.7"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </EventTrigger>
+                            </Ellipse.Triggers>
+                        </Ellipse>
+                        <TextBlock FontWeight="Bold" FontSize="12" Foreground="White">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Text" Value="ON AIR"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding State}" Value="Reconnecting">
+                                            <Setter Property="Text" Value="RECONNECTING"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                </Border>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                     <Button Style="{StaticResource TitleButton}" Click="Minimize_Click" ToolTip="Minimize"
                             AutomationProperties.Name="Minimize">
@@ -44,8 +157,12 @@
                     <StackPanel>
                         <TextBlock Text="1  ·  WHAT DO YOU WANT TO SHARE?" Style="{StaticResource CardTitle}"/>
                         <ComboBox ItemsSource="{Binding Targets}" SelectedItem="{Binding SelectedTarget}"
-                                  DisplayMemberPath="Title" IsEnabled="{Binding CanEdit}"
-                                  Style="{StaticResource NeonCombo}" AutomationProperties.Name="What to share"/>
+                                  IsEnabled="{Binding CanEdit}"
+                                  Style="{StaticResource NeonCombo}" AutomationProperties.Name="What to share">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate><TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis"/></DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
                         <TextBlock Margin="2,8,0,0" FontSize="13">
                             <Hyperlink Click="Refresh_Click">Refresh the list</Hyperlink>
                         </TextBlock>
@@ -182,8 +299,12 @@
             </StackPanel>
             </ScrollViewer>
         </Grid>
+        </Grid>
     </Border>
 </Window>
+
+
+
 
 
 
