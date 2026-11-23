@@ -87,8 +87,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public string StreamKey
     {
         get => _streamKey;
-        set { if (Set(ref _streamKey, value ?? "")) Recompute(); }
+        set { if (Set(ref _streamKey, value ?? "")) { Notify(nameof(KeyHint)); Notify(nameof(HasKeyHint)); Recompute(); } }
     }
+
+    /// <summary>Why the pasted text cannot be used as a key (null when the box is empty or fine).</summary>
+    public string? KeyHint => KeyValidator.Explain(StreamKey);
+    public bool HasKeyHint => KeyHint is not null;
 
     public string Status { get => _status; private set => Set(ref _status, value); }
     public string QualityText { get => _qualityText; private set => Set(ref _qualityText, value); }
@@ -213,6 +217,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private void Notify(string? name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
+
 
 
 

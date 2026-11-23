@@ -300,6 +300,23 @@ public class MainViewModelTests : IDisposable
     }
 
     [Fact]
+    public void KeyHint_follows_the_key_box()
+    {
+        var vm = Make();
+        var props = new List<string?>();
+        vm.PropertyChanged += (_, e) => props.Add(e.PropertyName);
+        Assert.Null(vm.KeyHint);
+        vm.StreamKey = "rtmps://a.rtmps.youtube.com:443/live2";
+        Assert.Equal(KeyValidator.ServerAddressHint, vm.KeyHint);
+        Assert.True(vm.HasKeyHint);
+        Assert.Contains(nameof(MainViewModel.KeyHint), props);
+        vm.StreamKey = "abcd-1234-efgh";
+        Assert.Null(vm.KeyHint);
+        Assert.False(vm.HasKeyHint);
+        vm.StreamKey = "";
+        Assert.Null(vm.KeyHint);
+    }
+    [Fact]
     public void Help_text_and_url_exist_for_each_platform()
     {
         var vm = Make();
@@ -341,6 +358,7 @@ public class SingleInstanceTests
         SingleInstance.Release(name);
     }
 }
+
 
 
 

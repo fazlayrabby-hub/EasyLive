@@ -1,4 +1,4 @@
-namespace EasyLive.Core;
+﻿namespace EasyLive.Core;
 
 public enum Platform { YouTube, Facebook }
 
@@ -58,5 +58,24 @@ public static class KeyValidator
         return key;
     }
 
+    public const string ServerAddressHint = "That's the server address - paste the stream key instead (the long code next to it).";
+    public const string SpacesHint = "The key can't contain spaces - copy just the stream key.";
+    public const string GenericHint = "That doesn't look like a stream key.";
+
+    /// <summary>Plain-language reason a non-empty pasted text cannot be used as a key; null when empty or valid.</summary>
+    public static string? Explain(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw) || Normalize(raw) is not null) return null;
+        var text = raw.Trim();
+        var schemeEnd = text.IndexOf("://", StringComparison.Ordinal);
+        if (schemeEnd > 0 && text[..schemeEnd] is var scheme &&
+            (scheme.Equals("rtmp", StringComparison.OrdinalIgnoreCase) || scheme.Equals("rtmps", StringComparison.OrdinalIgnoreCase)))
+            return ServerAddressHint;
+        foreach (var c in text)
+            if (char.IsWhiteSpace(c) || char.IsControl(c)) return SpacesHint;
+        return GenericHint;
+    }
+
     private static bool IsQuote(char c) => c is '"' or '\'' or '\u201C' or '\u201D' or '\u2018' or '\u2019';
 }
+

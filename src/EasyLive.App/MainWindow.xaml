@@ -75,6 +75,18 @@
                         <TextBox x:Name="KeyBox" Text="{Binding StreamKey, UpdateSourceTrigger=PropertyChanged}"
                                  IsEnabled="{Binding CanEdit}" Style="{StaticResource NeonTextBox}"
                                  AutomationProperties.Name="Stream key"/>
+                        <TextBlock Text="{Binding KeyHint}" Foreground="#FBBF24" FontSize="13" TextWrapping="Wrap" Margin="2,8,0,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasKeyHint}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
                         <TextBlock Margin="2,8,0,0" FontSize="13" TextWrapping="Wrap">
                             <Hyperlink Click="Help_Click">Where do I find this?</Hyperlink>
                         </TextBlock>
@@ -148,5 +160,6 @@
         </Grid>
     </Border>
 </Window>
+
 
 
