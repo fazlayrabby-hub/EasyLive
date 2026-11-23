@@ -23,9 +23,10 @@ public class AudioInputsManualTests
             if (c.Samples.Length % 2 != 0) badFormat = true;
             foreach (var s in c.Samples) peak = Math.Max(peak, Math.Abs(s));
         };
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         mixer.Start();
         await Task.Delay(3000);
-        _out.WriteLine($"MicActive={mixer.MicActive} chunks={chunks} samples={samples} (~{samples / 2 / 48000.0:F2}s) peak={peak:F4} oddLength={badFormat}");
+        _out.WriteLine($"MicActive={mixer.MicActive} chunks={chunks} samples={samples} (~{samples / 2 / 48000.0:F2}s audio, {sw.Elapsed.TotalSeconds:F2}s wall since before Start) peak={peak:F4} oddLength={badFormat}");
         Assert.True(chunks > 0);
     }
 }

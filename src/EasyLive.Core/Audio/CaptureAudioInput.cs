@@ -6,14 +6,17 @@ namespace EasyLive.Core.Audio;
 
 /// <summary>
 /// Wraps a NAudio capture device and converts whatever the device mix format is to 48 kHz stereo float32.
+/// Chunk timestamps form a contiguous timeline (re-synced to arrival time only on drift beyond the tolerance).
 /// </summary>
 public abstract class CaptureAudioInput : IAudioInput, IDisposable
 {
-    private const int OutRate = 48000;
+    private const int OutRate = AudioTiming.SampleRate;
     private readonly IWaveIn _capture;
     private readonly BufferedWaveProvider _buffer;
     private readonly ISampleProvider _stereo48k;
     private readonly float[] _readBuf = new float[OutRate / 10 * 2];     // up to 100 ms per read
+    private long _nextTs;
+    private bool _hasTs;
     private int _stopped;
 
     public event Action<AudioChunk>? Data;
@@ -30,8 +33,7 @@ public abstract class CaptureAudioInput : IAudioInput, IDisposable
         };
         ISampleProvider p = _buffer.ToSampleProvider();
         if (p.WaveFormat.SampleRate != OutRate) p = new WdlResamplingSampleProvider(p, OutRate);
-        if (p.WaveFormat.Channels == 1) p = new MonoToStereoSampleProvider(p);
-        else if (p.WaveFormat.Channels > 2) p = new FirstTwoChannelsProvider(p);
+        if (p.WaveFormat.Channels != 2) p = new DownmixProvider(p);
         _stereo48k = p;
         _capture.DataAvailable += OnData;
         _capture.RecordingStopped += OnStopped;
@@ -45,20 +47,21 @@ public abstract class CaptureAudioInput : IAudioInput, IDisposable
         {
             long arrival = Stopwatch.GetTimestamp();
             _buffer.AddSamples(e.Buffer, 0, e.BytesRecorded);
-            var chunks = new List<float[]>();
-            int total = 0, n;
+            int n;
             while ((n = _stereo48k.Read(_readBuf, 0, _readBuf.Length)) > 0)
             {
-                chunks.Add(_readBuf.AsSpan(0, n).ToArray());
-                total += n;
-            }
-            if (total == 0) return;
-            // QPC at the first sample = arrival minus what we are about to hand over.
-            long ticks = arrival - (long)(total / 2 / (double)OutRate * Stopwatch.Frequency);
-            foreach (var c in chunks)
-            {
-                Data?.Invoke(new AudioChunk(c, ticks));
-                ticks += (long)(c.Length / 2 / (double)OutRate * Stopwatch.Frequency);
+                long dur = AudioTiming.Duration(n);
+                // WASAPI delivers packets in bursts, so arrival time is only a coarse estimate of the first
+                // sample's time: keep a running contiguous timeline and re-sync only on real drift.
+                long estimate = arrival - dur;
+                if (!_hasTs || Math.Abs(estimate - _nextTs) > AudioTiming.ResyncTolerance)
+                {
+                    _nextTs = estimate;
+                    _hasTs = true;
+                }
+                long ts = _nextTs;
+                _nextTs += dur;
+                Data?.Invoke(new AudioChunk(_readBuf.AsSpan(0, n).ToArray(), ts));
             }
         }
         catch { /* never let an exception escape a NAudio callback thread */ }
@@ -78,13 +81,13 @@ public abstract class CaptureAudioInput : IAudioInput, IDisposable
         _capture.Dispose();
     }
 
-    /// <summary>Keeps channels 0 and 1 of a multi-channel stream (front left/right).</summary>
-    private sealed class FirstTwoChannelsProvider : ISampleProvider
+    /// <summary>Adapts any non-stereo channel count to stereo via <see cref="ChannelDownmix"/>.</summary>
+    private sealed class DownmixProvider : ISampleProvider
     {
         private readonly ISampleProvider _src;
         private float[] _tmp = Array.Empty<float>();
         public WaveFormat WaveFormat { get; }
-        public FirstTwoChannelsProvider(ISampleProvider src)
+        public DownmixProvider(ISampleProvider src)
         {
             _src = src;
             WaveFormat = WaveFormat.CreateIeeeFloatWaveFormat(src.WaveFormat.SampleRate, 2);
@@ -93,13 +96,11 @@ public abstract class CaptureAudioInput : IAudioInput, IDisposable
         {
             int ch = _src.WaveFormat.Channels, frames = count / 2;
             if (_tmp.Length < frames * ch) _tmp = new float[frames * ch];
-            int got = _src.Read(_tmp, 0, frames * ch) / ch;
-            for (int i = 0; i < got; i++)
-            {
-                buffer[offset + i * 2] = _tmp[i * ch];
-                buffer[offset + i * 2 + 1] = _tmp[i * ch + 1];
-            }
-            return got * 2;
+            int got = _src.Read(_tmp, 0, frames * ch) / ch * ch;
+            if (got == 0) return 0;
+            var stereo = ChannelDownmix.ToStereo(_tmp.AsSpan(0, got).ToArray(), ch);
+            Array.Copy(stereo, 0, buffer, offset, stereo.Length);
+            return stereo.Length;
         }
     }
 }
