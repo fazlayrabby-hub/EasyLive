@@ -11,6 +11,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{238C701E
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EasyLive.Core.Tests", "tests\EasyLive.Core.Tests\EasyLive.Core.Tests.csproj", "{96466504-4E33-4B6B-9D14-3FE9139EBA6D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EasyLive.App", "src\EasyLive.App\EasyLive.App.csproj", "{F956B077-397F-4F66-AD02-CCAB33586923}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -28,9 +30,14 @@ Global
 		{96466504-4E33-4B6B-9D14-3FE9139EBA6D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{96466504-4E33-4B6B-9D14-3FE9139EBA6D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{96466504-4E33-4B6B-9D14-3FE9139EBA6D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F956B077-397F-4F66-AD02-CCAB33586923}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F956B077-397F-4F66-AD02-CCAB33586923}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F956B077-397F-4F66-AD02-CCAB33586923}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F956B077-397F-4F66-AD02-CCAB33586923}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{8B4CB8ED-4F5B-45D9-8262-4C2C9806AF2D} = {93122443-C479-49F0-814C-4E517C8B3A5E}
 		{96466504-4E33-4B6B-9D14-3FE9139EBA6D} = {238C701E-1768-41A8-8AB1-A8F8875EFA2A}
+		{F956B077-397F-4F66-AD02-CCAB33586923} = {93122443-C479-49F0-814C-4E517C8B3A5E}
 	EndGlobalSection
 EndGlobal

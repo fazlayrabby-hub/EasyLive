@@ -24,7 +24,7 @@ public sealed record SessionStatus(SessionState State, string Message, string? Q
 /// the session/mixer, except capture Start/Stop which are serialised under their own lock.
 /// </para>
 /// </summary>
-public sealed class SessionOrchestrator
+public sealed class SessionOrchestrator : ISessionController
 {
     public const string CheckingMessage = "Checking your computer and internet…";
     public const string NoKeyMessage = "Paste your stream key first";

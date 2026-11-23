@@ -1,0 +1,64 @@
+﻿<Window x:Class="EasyLive.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="EasyLive" Width="460" Height="620" MinWidth="420" MinHeight="580"
+        WindowStartupLocation="CenterScreen" FontSize="15">
+    <StackPanel Margin="24">
+        <TextBlock Text="1. What do you want to share?" FontWeight="SemiBold"/>
+        <ComboBox ItemsSource="{Binding Targets}" SelectedItem="{Binding SelectedTarget}"
+                  DisplayMemberPath="Title" IsEnabled="{Binding CanEdit}" Margin="0,6,0,4" Padding="6"/>
+        <TextBlock Margin="0,0,0,14">
+            <Hyperlink Click="Refresh_Click">Refresh the list</Hyperlink>
+        </TextBlock>
+
+        <TextBlock Text="2. Where are you streaming?" FontWeight="SemiBold"/>
+        <StackPanel Orientation="Horizontal" Margin="0,6,0,14" IsEnabled="{Binding CanEdit}">
+            <RadioButton Content="YouTube" IsChecked="{Binding IsYouTube}" GroupName="p" Margin="0,0,24,0"/>
+            <RadioButton Content="Facebook" IsChecked="{Binding IsFacebook}" GroupName="p"/>
+        </StackPanel>
+
+        <TextBlock Text="3. Your stream key" FontWeight="SemiBold"/>
+        <TextBox x:Name="KeyBox" Text="{Binding StreamKey, UpdateSourceTrigger=PropertyChanged}"
+                 IsEnabled="{Binding CanEdit}" Margin="0,6,0,4" Padding="6"/>
+        <TextBlock Margin="0,0,0,18" TextWrapping="Wrap">
+            <Hyperlink Click="Help_Click">Where do I find this?</Hyperlink>
+        </TextBlock>
+
+        <Button Style="{StaticResource GoLiveButton}" Content="Go Live" Command="{Binding GoLiveCommand}"/>
+
+        <TextBlock Text="{Binding Status}" TextWrapping="Wrap" FontSize="17" Margin="0,18,0,2" MinHeight="48"
+                   AutomationProperties.LiveSetting="Polite"/>
+        <TextBlock Text="{Binding QualityText}" Foreground="#555" Margin="0,0,0,12"/>
+
+        <Button Content="Stop" Command="{Binding StopCommand}" Height="40" FontSize="16"/>
+
+        <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
+            <Button Content="Mute microphone" Command="{Binding MuteMicCommand}" Padding="10,6" Margin="0,0,10,0"/>
+            <Button Content="Mute game sound" Command="{Binding MuteSystemCommand}" Padding="10,6"/>
+        </StackPanel>
+        <TextBlock Margin="0,6,0,0" Foreground="#555">
+            <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                    <Setter Property="Text" Value=""/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding MicMuted}" Value="True">
+                            <Setter Property="Text" Value="Your microphone is muted."/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TextBlock.Style>
+        </TextBlock>
+        <TextBlock Foreground="#555">
+            <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                    <Setter Property="Text" Value=""/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding SystemMuted}" Value="True">
+                            <Setter Property="Text" Value="Game sound is muted."/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TextBlock.Style>
+        </TextBlock>
+    </StackPanel>
+</Window>
