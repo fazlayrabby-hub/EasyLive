@@ -92,6 +92,8 @@
                             <StaticResource ResourceKey="NeonBrush"/>
                         </TextBlock.Foreground>
                     </TextBlock>
+                    <TextBlock Text="by sohan roni" FontSize="10.5" Foreground="#B4BDDB" Opacity="0.85"
+                               Margin="8,0,0,2.5" VerticalAlignment="Bottom"/>
                 </StackPanel>
                 <Border HorizontalAlignment="Center" VerticalAlignment="Center" CornerRadius="12" Padding="10,3"
                         BorderThickness="1" AutomationProperties.Name="On air indicator">
@@ -303,6 +305,8 @@
         </Grid>
     </Border>
 </Window>
+
+
 
 
 

@@ -79,3 +79,8 @@ Fix base: bcf23f9. Tests: Passed 234, Skipped 5, Failed 0 (4 more than before in
 - Wired: `<ApplicationIcon>` (exe icon) and the two assets as WPF resources in `EasyLive.App.csproj` (minimal edit), `Window Icon` in `MainWindow.xaml`, a 24 px logo in the custom title bar replacing the dot, and `SetCurrentProcessExplicitAppUserModelID("EasyLive.App")` at startup so the taskbar groups the window.
 - Seen on screen: the logo in the title bar next to EASYLIVE (idle and live) and the logo as the taskbar button icon while the app runs (cropped taskbar screenshot, red running indicator under it). The badge reads clearly at taskbar size.
 - Not checked: the exe icon in File Explorer, 16 px rendering in the title bar tray or alt-tab, and the icon at high DPI.
+
+
+# Title bar credit (commit "feat: title bar credit")
+- Added a small "by sohan roni" (10.5 px, muted light blue-grey, 85% opacity) right after EASYLIVE in the custom title bar, bottom-aligned with a 2.5 px lift to sit near the name's baseline. `Window.Title` stays "EasyLive".
+- Seen in the live screenshot: legible on the crimson background, not clipped, with clear space before the ON AIR pill at the default 500 px width. An idle screenshot from this run was taken before the window finished drawing, so idle was judged from the earlier idle shots (same bar, navy background). Not tested: a real 480 px minimum-width window (the window is 500 wide by default and the pill sits in the centre with about 50 px of free space either side).
