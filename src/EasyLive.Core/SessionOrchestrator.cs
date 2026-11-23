@@ -94,6 +94,10 @@ public sealed class SessionOrchestrator : ISessionController
     /// </summary>
     public event Action<SessionStatus>? StatusChanged;
 
+    /// <summary>Raised on a background thread: once when the stream goes Live and then about once a second. The last value stays
+    /// available after the stream stops.</summary>
+    public event Action<StreamDetails>? DetailsChanged;
+
     public SessionStatus Status { get { lock (_gate) return _status; } }
 
     // ------------------------------------------------------------------ Go Live
@@ -181,6 +185,7 @@ public sealed class SessionOrchestrator : ISessionController
         }
         ct.ThrowIfCancellationRequested();
 
+        run.UploadMbps = net.UploadMbps;
         var plan = QualityPlanner.Choose(hw, net);
         if (plan.TooSlow) return TooSlowMessage;
 
@@ -241,6 +246,7 @@ public sealed class SessionOrchestrator : ISessionController
             SetStatus(LiveStatus(run));
         }
         Publish();
+        EmitDetails(run);
         return null;
     }
 
@@ -361,8 +367,29 @@ public sealed class SessionOrchestrator : ISessionController
 
     // ------------------------------------------------------------------ adaptation (once a second)
 
+    private void EmitDetails(Run run)
+    {
+        try
+        {
+            Slot? slot; StreamPlan? plan; long since;
+            lock (_gate)
+            {
+                if (!IsCurrent(run) || _status.State != SessionState.Live) return;
+                slot = run.Session; plan = run.Plan; since = run.LiveSince;
+            }
+            if (slot is null || plan is null) return;
+            var h = slot.Session.Health;
+            DetailsChanged?.Invoke(new StreamDetails(
+                run.Platform, run.Target.Title, plan.Encoder, plan.Rung.Width, plan.Rung.Height, plan.Rung.Fps,
+                h.CurrentKbps > 0 ? h.CurrentKbps : plan.StartKbps, plan.Rung.MinKbps, plan.Rung.MaxKbps,
+                run.UploadMbps, h.DroppedFramesTotal, h.SendQueueMs, _clock.GetElapsedTime(since)));
+        }
+        catch (Exception ex) { Debug.WriteLine($"Details failed: {ex.GetType().Name}"); }
+    }
+
     private void OnTick(Run run)
     {
+        EmitDetails(run);
         RefeedBlank(run);                                    // runs even while a reinit holds TickBusy
         if (Interlocked.CompareExchange(ref run.TickBusy, 1, 0) != 0) return;   // a reinit is still in progress
         bool release = true;
@@ -821,6 +848,7 @@ public sealed class SessionOrchestrator : ISessionController
         public AdaptationController? Adapt;
         public int LastDropped;
         public long LiveSince;
+        public double UploadMbps;
         public long LastLiveAt;                              // last time the run (re)entered Live
         public long? FailureWindowStart;                     // start of the current 120 s reconnect window
         public bool WentLive;

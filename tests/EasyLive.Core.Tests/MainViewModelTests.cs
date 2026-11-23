@@ -21,6 +21,8 @@ public class MainViewModelTests : IDisposable
     private sealed class FakeController : ISessionController
     {
         public event Action<SessionStatus>? StatusChanged;
+        public event Action<StreamDetails>? DetailsChanged;
+        public void RaiseDetails(StreamDetails d) => DetailsChanged?.Invoke(d);
         public List<(Platform P, CaptureTarget T)> Calls = new();
         public int StopCalls;
         public bool BlockUntilCancelled;
@@ -316,6 +318,80 @@ public class MainViewModelTests : IDisposable
         vm.StreamKey = "";
         Assert.Null(vm.KeyHint);
     }
+    private static StreamDetails Details(EncoderKind e = EncoderKind.QuickSync, int dropped = 3) =>
+        new(Platform.YouTube, "Monitor 1 (1920x1080)", e, 1280, 720, 30, 1700, 600, 1500, 12.34, dropped, 80, TimeSpan.FromSeconds(3725));
+
+    private static string Row(MainViewModel vm, string label) =>
+        vm.DetailRows.Single(r => r.Label == label).Value;
+
+    [Fact]
+    public void Idle_details_show_platform_source_and_the_automatic_quality_hint()
+    {
+        var vm = Make();
+        vm.SelectedTarget = Window;
+        vm.Platform = Platform.Facebook;
+        Assert.Equal("Facebook", Row(vm, "Platform"));
+        Assert.Equal("Notepad", Row(vm, "Source"));
+        Assert.Equal(2, vm.DetailRows.Count);
+        Assert.Equal("Quality is chosen automatically when you press Go Live.", vm.DetailsHint);
+    }
+
+    [Fact]
+    public void Live_details_are_worded_in_plain_language()
+    {
+        var vm = Make();
+        _ctl.RaiseDetails(Details());
+        Assert.Equal("YouTube", Row(vm, "Platform"));
+        Assert.Equal("Monitor 1 (1920x1080)", Row(vm, "Source"));
+        Assert.Equal("1280 x 720 at 30 frames per second", Row(vm, "Picture"));
+        Assert.Equal("1,700 kbps now (allowed 600 to 1,500)", Row(vm, "Video bitrate"));
+        Assert.Equal("Intel Quick Sync (hardware)", Row(vm, "Encoder"));
+        Assert.Equal("AAC 128 kbps, 48 kHz stereo. Microphone on, game sound on.", Row(vm, "Audio"));
+        Assert.Equal("12.3 Mbps measured", Row(vm, "Upload speed"));
+        Assert.Equal("Every 2 seconds", Row(vm, "Keyframes"));
+        Assert.Equal("3 dropped", Row(vm, "Dropped frames"));
+        Assert.Equal("80 ms waiting to send", Row(vm, "Send delay"));
+        Assert.Equal("1:02:05", Row(vm, "Live for"));
+        Assert.Equal("", vm.DetailsHint);
+    }
+
+    [Theory]
+    [InlineData(EncoderKind.Amf, "AMD AMF (hardware)")]
+    [InlineData(EncoderKind.Nvenc, "NVIDIA NVENC (hardware)")]
+    [InlineData(EncoderKind.OpenH264, "Software (OpenH264, capped at 720p30)")]
+    public void Encoder_names(EncoderKind kind, string text)
+    {
+        var vm = Make();
+        _ctl.RaiseDetails(Details(kind));
+        Assert.Equal(text, Row(vm, "Encoder"));
+    }
+
+    [Fact]
+    public void Audio_row_follows_the_mute_buttons_and_details_marshal_through_the_dispatcher()
+    {
+        var d = new QueueDispatcher();
+        var vm = Make(d);
+        _ctl.RaiseDetails(Details());
+        Assert.Equal(2, vm.DetailRows.Count);   // not applied yet
+        d.Pending.Dequeue()();
+        vm.MuteMicCommand.Execute(null);
+        Assert.Contains("Microphone muted", Row(vm, "Audio"));
+        vm.MuteSystemCommand.Execute(null);
+        Assert.Contains("game sound muted", Row(vm, "Audio"));
+    }
+
+    [Fact]
+    public void Details_stay_after_the_stream_ends_and_clear_when_a_new_run_starts()
+    {
+        var vm = Make();
+        vm.SelectedTarget = Monitor;
+        vm.StreamKey = "abcd-1234";
+        _ctl.RaiseDetails(Details());
+        _ctl.Raise(SessionState.Stopped, "Stream stopped");
+        Assert.Equal("3 dropped", Row(vm, "Dropped frames"));
+        vm.GoLiveCommand.Execute(null);
+        Assert.Equal(2, vm.DetailRows.Count);
+    }
     [Fact]
     public void Help_text_and_url_exist_for_each_platform()
     {
@@ -358,6 +434,8 @@ public class SingleInstanceTests
         SingleInstance.Release(name);
     }
 }
+
+
 
 
 

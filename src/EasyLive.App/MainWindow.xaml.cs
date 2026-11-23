@@ -11,6 +11,8 @@ public partial class MainWindow : Window
     public MainWindow(MainViewModel vm)
     {
         InitializeComponent();
+        // Never taller than the screen (the content scrolls when it does not fit).
+        Height = Math.Min(Height, SystemParameters.WorkArea.Height - 10);
         _vm = vm;
         DataContext = vm;
     }
@@ -34,4 +36,5 @@ public partial class MainWindow : Window
         catch { /* no browser: the message above is enough */ }
     }
 }
+
 

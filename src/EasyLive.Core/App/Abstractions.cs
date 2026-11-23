@@ -5,6 +5,8 @@ public interface ISessionController
 {
     /// <summary>Raised on any thread.</summary>
     event Action<SessionStatus>? StatusChanged;
+    /// <summary>Raised on any thread, about once a second while live.</summary>
+    event Action<StreamDetails>? DetailsChanged;
     Task GoLiveAsync(Platform p, EasyLive.Core.Capture.CaptureTarget t, CancellationToken ct);
     Task StopAsync();
 }
@@ -14,3 +16,4 @@ public interface IUiDispatcher
 {
     void Post(Action action);
 }
+

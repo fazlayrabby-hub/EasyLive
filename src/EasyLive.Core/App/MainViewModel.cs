@@ -1,11 +1,14 @@
 ﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
 using EasyLive.Core.Capture;
 using EasyLive.Core.Streaming;
 
 namespace EasyLive.Core;
+
+public sealed record DetailRow(string Label, string Value);
 
 /// <summary>State and commands of the single EasyLive window. Needs no UI thread: all UI work goes through <see cref="IUiDispatcher"/>.</summary>
 public sealed class MainViewModel : INotifyPropertyChanged
@@ -27,6 +30,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _qualityText = "";
     private SessionState _state = SessionState.Idle;
     private bool _micMuted, _systemMuted;
+    private StreamDetails? _details;
+    private IReadOnlyList<DetailRow> _detailRows = Array.Empty<DetailRow>();
 
     // The orchestrator reads the key from the KeyStore, so it is saved when Go Live is pressed and rolled back if the stream never went live.
     private Platform? _runPlatform;
@@ -46,12 +51,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _stop = new RelayCommand(() => _ = StopSafe(), () => IsBusy);
         GoLiveCommand = _goLive;
         StopCommand = _stop;
-        MuteMicCommand = new RelayCommand(() => { MicMuted = !MicMuted; MuteChanged?.Invoke(); });
-        MuteSystemCommand = new RelayCommand(() => { SystemMuted = !SystemMuted; MuteChanged?.Invoke(); });
+        MuteMicCommand = new RelayCommand(() => { MicMuted = !MicMuted; MuteChanged?.Invoke(); RebuildDetails(); });
+        MuteSystemCommand = new RelayCommand(() => { SystemMuted = !SystemMuted; MuteChanged?.Invoke(); RebuildDetails(); });
 
         RefreshTargets();
+        RebuildDetails();
         _streamKey = SafeLoad(_platform) ?? "";
         _session.StatusChanged += s => _ui.Post(() => Apply(s));
+        _session.DetailsChanged += d => _ui.Post(() => { _details = d; RebuildDetails(); });
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -67,7 +74,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public CaptureTarget? SelectedTarget
     {
         get => _selected;
-        set { if (Set(ref _selected, value)) Recompute(); }
+        set { if (Set(ref _selected, value)) { if (!IsBusy) _details = null; RebuildDetails(); Recompute(); } }
     }
 
     public Platform Platform
@@ -76,7 +83,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
         set
         {
             if (!Set(ref _platform, value)) return;
+            if (!IsBusy) _details = null;
             StreamKey = SafeLoad(value) ?? "";
+            RebuildDetails();
             Notify(nameof(HelpUrl)); Notify(nameof(HelpText)); Notify(nameof(IsYouTube)); Notify(nameof(IsFacebook));
         }
     }
@@ -93,6 +102,50 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// <summary>Why the pasted text cannot be used as a key (null when the box is empty or fine).</summary>
     public string? KeyHint => KeyValidator.Explain(StreamKey);
     public bool HasKeyHint => KeyHint is not null;
+
+    /// <summary>The "Stream settings" card: label/value pairs in plain words.</summary>
+    public IReadOnlyList<DetailRow> DetailRows { get => _detailRows; private set => Set(ref _detailRows, value); }
+    public string DetailsHint => _details is null ? "Quality is chosen automatically when you press Go Live." : "";
+
+    private static string N0(int v) => v.ToString("N0", CultureInfo.InvariantCulture);
+
+    internal static string EncoderName(EncoderKind k) => k switch
+    {
+        EncoderKind.QuickSync => "Intel Quick Sync (hardware)",
+        EncoderKind.Amf => "AMD AMF (hardware)",
+        EncoderKind.Nvenc => "NVIDIA NVENC (hardware)",
+        _ => "Software (OpenH264, capped at 720p30)",
+    };
+
+    private void RebuildDetails()
+    {
+        var d = _details;
+        var rows = new List<DetailRow>();
+        if (d is null)
+        {
+            rows.Add(new("Platform", Platform == Platform.Facebook ? "Facebook" : "YouTube"));
+            rows.Add(new("Source", SelectedTarget?.Title ?? "Nothing picked yet"));
+        }
+        else
+        {
+            var audio = "AAC 128 kbps, 48 kHz stereo. " + (MicMuted ? "Microphone muted" : "Microphone on") + ", " +
+                        (SystemMuted ? "game sound muted." : "game sound on.");
+            var t = d.LiveElapsed;
+            rows.Add(new("Platform", d.Platform == Platform.Facebook ? "Facebook" : "YouTube"));
+            rows.Add(new("Source", d.SourceTitle));
+            rows.Add(new("Picture", $"{d.Width} x {d.Height} at {d.Fps} frames per second"));
+            rows.Add(new("Video bitrate", $"{N0(d.CurrentKbps)} kbps now (allowed {N0(d.MinKbps)} to {N0(d.MaxKbps)})"));
+            rows.Add(new("Encoder", EncoderName(d.Encoder)));
+            rows.Add(new("Audio", audio));
+            rows.Add(new("Upload speed", d.UploadMbps.ToString("0.0", CultureInfo.InvariantCulture) + " Mbps measured"));
+            rows.Add(new("Keyframes", $"Every {d.KeyframeSeconds} seconds"));
+            rows.Add(new("Dropped frames", $"{N0(d.DroppedFrames)} dropped"));
+            rows.Add(new("Send delay", $"{N0(d.SendQueueMs)} ms waiting to send"));
+            rows.Add(new("Live for", $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}"));
+        }
+        DetailRows = rows;
+        Notify(nameof(DetailsHint));
+    }
 
     public string Status { get => _status; private set => Set(ref _status, value); }
     public string QualityText { get => _qualityText; private set => Set(ref _qualityText, value); }
@@ -134,6 +187,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         _runPlatform = Platform;
         _runWentLive = false;
+        _details = null;
+        RebuildDetails();
         _runCts?.Dispose();
         var cts = _runCts = new CancellationTokenSource();
         _previousKey = SafeLoad(Platform);
@@ -217,6 +272,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private void Notify(string? name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }
+
+
 
 
 

@@ -1,4 +1,4 @@
-using EasyLive.Core.Audio;
+﻿using EasyLive.Core.Audio;
 using EasyLive.Core.Capture;
 using EasyLive.Core.Streaming;
 using Microsoft.Extensions.Time.Testing;
@@ -920,6 +920,31 @@ public sealed class SessionOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task Details_are_raised_when_live_and_every_second()
+    {
+        var details = new List<StreamDetails>();
+        _orch.DetailsChanged += d => { lock (details) details.Add(d); };
+        await GoLiveAsync();
+        StreamDetails first;
+        lock (details) { Assert.Single(details); first = details[0]; }
+        Assert.Equal(Platform.YouTube, first.Platform);
+        Assert.Equal(Monitor.Title, first.SourceTitle);
+        Assert.Equal(EncoderKind.QuickSync, first.Encoder);
+        Assert.Equal((1280, 720, 30), (first.Width, first.Height, first.Fps));
+        Assert.Equal(1800, first.CurrentKbps);
+        Assert.Equal(3, first.UploadMbps);
+        Assert.Equal(2, first.KeyframeSeconds);
+
+        LastSession.Health = new StreamHealth(120, 7, 0, 1700);
+        Advance(3);
+        StreamDetails last;
+        lock (details) { Assert.True(details.Count >= 4); last = details[^1]; }
+        Assert.Equal(7, last.DroppedFrames);
+        Assert.Equal(120, last.SendQueueMs);
+        Assert.Equal(1700, last.CurrentKbps);
+        Assert.True(last.LiveElapsed >= TimeSpan.FromSeconds(3));
+    }
+    [Fact]
     public async Task Go_live_while_live_throws()
     {
         await GoLiveAsync();
@@ -928,3 +953,4 @@ public sealed class SessionOrchestratorTests : IDisposable
         Assert.Equal(SessionState.Live, _orch.Status.State);
     }
 }
+
