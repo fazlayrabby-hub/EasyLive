@@ -23,15 +23,15 @@ public sealed class KeyStore
 
     public string? Load(Platform p)
     {
-        if (!ReadEntries().TryGetValue(p.ToString(), out var b64)) return null;
         try
         {
+            if (!ReadEntries().TryGetValue(p.ToString(), out var b64) || b64 is null) return null;
             var plain = ProtectedData.Unprotect(Convert.FromBase64String(b64), Entropy, DataProtectionScope.CurrentUser);
             return Encoding.UTF8.GetString(plain);
         }
-        catch (Exception e) when (e is CryptographicException or FormatException)
+        catch (Exception e) when (e is CryptographicException or FormatException or IOException or UnauthorizedAccessException)
         {
-            // Different Windows user or damaged entry: treat as no key stored.
+            // Different Windows user, damaged entry or unreadable file: treat as no key stored.
             return null;
         }
     }
@@ -43,24 +43,27 @@ public sealed class KeyStore
             WriteEntries(entries);
     }
 
-    private Dictionary<string, string> ReadEntries()
+    private Dictionary<string, string?> ReadEntries()
     {
+        // Only a corrupt file is treated as empty; IO errors propagate so a transient
+        // read failure can never lead to the other platform's key being overwritten.
+        if (!File.Exists(_path)) return new();
         try
         {
-            if (!File.Exists(_path)) return new();
-            var parsed = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(_path));
-            return parsed ?? new();
+            return JsonSerializer.Deserialize<Dictionary<string, string?>>(File.ReadAllText(_path)) ?? new();
         }
-        catch (Exception e) when (e is JsonException or IOException)
+        catch (JsonException)
         {
             return new();
         }
     }
 
-    private void WriteEntries(Dictionary<string, string> entries)
+    private void WriteEntries(Dictionary<string, string?> entries)
     {
         var dir = Path.GetDirectoryName(Path.GetFullPath(_path));
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-        File.WriteAllText(_path, JsonSerializer.Serialize(entries));
+        var tmp = _path + ".tmp";
+        File.WriteAllText(tmp, JsonSerializer.Serialize(entries));
+        File.Move(tmp, _path, overwrite: true);
     }
 }

@@ -31,11 +31,38 @@ public class KeyStoreTests : IDisposable
     public void Normalize_rejects_control_characters() => Assert.Null(KeyValidator.Normalize("abcd\u0001efgh"));
 
     [Theory]
-    [InlineData("abc")]
-    public void Normalize_too_short_returns_null(string raw) => Assert.Null(KeyValidator.Normalize(raw));
+    [InlineData(3, false)]
+    [InlineData(4, true)]
+    [InlineData(200, true)]
+    [InlineData(201, false)]
+    public void Normalize_length_boundaries(int length, bool accepted)
+    {
+        var result = KeyValidator.Normalize(new string('a', length));
+        if (accepted) Assert.Equal(new string('a', length), result);
+        else Assert.Null(result);
+    }
 
-    [Fact]
-    public void Normalize_too_long_returns_null() => Assert.Null(KeyValidator.Normalize(new string('a', 201)));
+    [Theory]
+    [InlineData("rtmps://a.rtmps.youtube.com:443/live2")]
+    [InlineData("rtmps://a.rtmps.youtube.com:443/live2/")]
+    [InlineData("rtmps://live-api-s.facebook.com:443/rtmp/")]
+    [InlineData("rtmps://host")]
+    [InlineData("rtmps://host/")]
+    public void Normalize_server_url_without_key_returns_null(string raw) => Assert.Null(KeyValidator.Normalize(raw));
+
+    [Theory]
+    [InlineData("abcd​1234")]
+    [InlineData("﻿abcd-1234")]
+    [InlineData("abcd‌1234")]
+    [InlineData("abcd‍1234")]
+    public void Normalize_rejects_format_characters(string raw) => Assert.Null(KeyValidator.Normalize(raw));
+
+    [Theory]
+    [InlineData("\"abcd-1234\"")]
+    [InlineData("'abcd-1234'")]
+    [InlineData("“abcd-1234”")]
+    [InlineData("  ‘abcd-1234’ ")]
+    public void Normalize_strips_surrounding_quotes(string raw) => Assert.Equal("abcd-1234", KeyValidator.Normalize(raw));
 
     [Fact]
     public void Normalize_full_url_extracts_key() =>
@@ -133,5 +160,35 @@ public class KeyStoreTests : IDisposable
         var store = new KeyStore(FilePath);
         Assert.Null(store.Load(Platform.YouTube));
         Assert.Null(store.Load(Platform.Facebook));
+    }
+
+    [Fact]
+    public void Locked_file_makes_save_throw_and_keeps_other_entry()
+    {
+        var store = new KeyStore(FilePath);
+        store.Save(Platform.Facebook, "FB-1-0-XyZ");
+        using (new FileStream(FilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            Assert.ThrowsAny<IOException>(() => store.Save(Platform.YouTube, "abcd-1234"));
+            Assert.ThrowsAny<IOException>(() => store.Clear(Platform.YouTube));
+            Assert.Null(store.Load(Platform.Facebook));
+        }
+        Assert.Equal("FB-1-0-XyZ", store.Load(Platform.Facebook));
+        Assert.Null(store.Load(Platform.YouTube));
+    }
+
+    [Fact]
+    public void Null_json_value_loads_null()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
+        File.WriteAllText(FilePath, "{\"YouTube\":null}");
+        Assert.Null(new KeyStore(FilePath).Load(Platform.YouTube));
+    }
+
+    [Fact]
+    public void Save_leaves_no_temp_file()
+    {
+        new KeyStore(FilePath).Save(Platform.YouTube, "abcd-1234");
+        Assert.False(File.Exists(FilePath + ".tmp"));
     }
 }

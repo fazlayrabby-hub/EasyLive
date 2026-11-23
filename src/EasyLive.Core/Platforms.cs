@@ -31,16 +31,32 @@ public static class KeyValidator
         if (string.IsNullOrWhiteSpace(raw)) return null;
 
         var key = raw.Trim();
-        if (key.StartsWith("rtmp://", StringComparison.OrdinalIgnoreCase) ||
-            key.StartsWith("rtmps://", StringComparison.OrdinalIgnoreCase))
+        if (key.Length >= 2 && IsQuote(key[0]) && IsQuote(key[^1]))
+            key = key[1..^1].Trim();
+
+        var schemeEnd = key.IndexOf("://", StringComparison.Ordinal);
+        if (schemeEnd > 0 && key[..schemeEnd] is var scheme &&
+            (scheme.Equals("rtmp", StringComparison.OrdinalIgnoreCase) ||
+             scheme.Equals("rtmps", StringComparison.OrdinalIgnoreCase)))
         {
-            key = key.TrimEnd('/');
-            key = key[(key.LastIndexOf('/') + 1)..];
+            var rest = key[(schemeEnd + 3)..];
+            var slash = rest.IndexOf('/');
+            if (slash < 0) return null; // no path: just a host
+            var path = rest[(slash + 1)..].TrimEnd('/');
+            if (path.Length == 0) return null;
+            key = path[(path.LastIndexOf('/') + 1)..];
+            // A bare server URL ends in the ingest path, not a key.
+            if (key.Equals("live2", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("rtmp", StringComparison.OrdinalIgnoreCase))
+                return null;
         }
 
         if (key.Length < MinLength || key.Length > MaxLength) return null;
         foreach (var c in key)
-            if (char.IsWhiteSpace(c) || char.IsControl(c)) return null;
+            if (char.IsWhiteSpace(c) || char.IsControl(c) ||
+                char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.Format) return null;
         return key;
     }
+
+    private static bool IsQuote(char c) => c is '"' or '\'' or '\u201C' or '\u201D' or '\u2018' or '\u2019';
 }
