@@ -54,7 +54,7 @@ Do not copy the "server URL" or "server address". It is a long web address that 
 
 ## 5. Go live, step by step
 
-Open EasyLive from the Start menu or the desktop icon.
+Open EasyLive from the Start menu or the desktop icon. Look for the purple EasyLive logo and the words *by sohan roni* at the top.
 
 ![The EasyLive start screen](images/01-start-screen.png)
 
@@ -74,7 +74,7 @@ Open EasyLive from the Start menu or the desktop icon.
 
 ### When you are live
 
-The whole window turns **red** and the button says **YOU'RE LIVE**. The red color is a reminder: people can see your screen right now. Be careful what you open.
+The whole window turns **red**. A red **ON AIR** tag appears at the top, next to the EasyLive name, and the big button says **YOU'RE LIVE**. The red color is a reminder: people can see your screen right now. Be careful what you open.
 
 ![EasyLive while live. The window is red.](images/04-live.png)
 
@@ -84,7 +84,7 @@ Go to YouTube or Facebook in your browser to see your show. It may take 10 to 30
 
 ### To stop
 
-1. Press **Stop** in EasyLive. The red color goes away and it says **Stream stopped**.
+1. Press **Stop** in EasyLive. The red color and the **ON AIR** tag go away and it says **Stream stopped**.
 2. **Then end the broadcast on YouTube or Facebook too.** Stopping EasyLive stops sending video, but the show on the website may still say "live" for a little while.
 
 ![After pressing Stop](images/05-stopped.png)
@@ -179,3 +179,4 @@ EasyLive uses free, open-source software, including FFmpeg, OpenH264, NAudio, Vo
 - the `LICENSES` folder
 
 By default, that folder is `%LOCALAPPDATA%\Programs\EasyLive`.
+

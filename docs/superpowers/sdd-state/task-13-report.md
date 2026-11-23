@@ -23,3 +23,9 @@ Status: DONE_WITH_CONCERNS.
 - Not verified: the interactive installer wizard (only silent mode run), upgrade-in-place over an older version, the desktop-shortcut and Start Menu shortcut creation (tested with /NOICONS), the uninstall prompt "Yes" path, close-running-app on upgrade, SmartScreen behaviour, and the install on a PC with no .NET. The guide's YouTube/Facebook steps use "look for" wording and were not checked against the live sites. The mute buttons were not shown in action. `%LOCALAPPDATA%\EasyLive\keys.json` already existed on this PC from earlier testing.
 - The installer is not code-signed (guide explains the SmartScreen steps).
 - The Task 12 legal concerns (OpenH264 patents, FFmpeg source offer) still apply to the installer.
+
+## Refresh (screenshots retaken from the current build)
+- The first screenshots came from a stale `artifacts\EasyLive-1.0.0` published before commit 90ed9be (combo showed `CaptureTarget { ... }`, no logo/credit/red live look). The earlier "app bug" concern was therefore not a bug in HEAD.
+- Re-ran `build\make-installer.ps1 -Rebuild` (fresh publish from HEAD, licence checks OK), retook all five screenshots with the fake key testkey-1234 on a plain backdrop. Checked each: logo, "by sohan roni", combo shows only "Monitor 1 (1920x1080) - primary", live shot has red background, ON AIR pill and settings card; no personal info. keys.json restored (347 bytes).
+- Guide text now mentions the logo/credit, the red window and ON AIR tag (and that they go away after Stop). md/html/pdf regenerated; PDF (12 pages) rendered with Windows.Data.Pdf and pages 4 and 9 inspected: layout fine (one page has white space after a figure kept together with its caption).
+- Installer rebuilt (90.3 MB) and the silent install into a temp dir / start without DOTNET_ROOT / silent uninstall test re-run: all passed; user data kept.
