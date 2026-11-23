@@ -196,6 +196,19 @@ public class TimelineTests
     }
 
     [Fact]
+    public void Pad_to_fills_silence_up_to_a_target_and_never_goes_back()
+    {
+        var t = new AudioTimeline(0, F);
+        t.Place(0, 480);
+        Assert.Equal(4320, t.PadTo(4800));
+        Assert.Equal(4800, t.NextPts);
+        Assert.Equal(0, t.PadTo(1000));
+        Assert.Equal(4800, t.NextPts);
+        var p = t.Place(F / 10, 480);         // the late chunk lands right after the padding
+        Assert.Equal((4800L, 0, 0), (p.Pts, p.SkipFrames, p.SilenceFrames));
+    }
+
+    [Fact]
     public void Samples_before_the_session_start_are_dropped()
     {
         var t = new AudioTimeline(startQpc: F, qpcFrequency: F);

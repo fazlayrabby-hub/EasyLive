@@ -48,6 +48,15 @@ internal sealed class AudioTimeline
     /// <summary>PTS (in samples) the next emitted sample will get.</summary>
     public long NextPts { get; private set; }
 
+    /// <summary>Advances the timeline to <paramref name="targetPts"/> with silence; returns the silence length.</summary>
+    public int PadTo(long targetPts)
+    {
+        if (targetPts <= NextPts) return 0;
+        int pad = (int)Math.Min(targetPts - NextPts, int.MaxValue);
+        NextPts += pad;
+        return pad;
+    }
+
     /// <summary>Where a chunk of <paramref name="frames"/> sample frames goes. <c>Pts</c> is the PTS of the first
     /// emitted sample (silence first, if any); skip that many frames from the chunk start.</summary>
     public (long Pts, int SkipFrames, int SilenceFrames) Place(long chunkQpc, int frames)
